@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react'; 
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons'; 
+import { useFocusEffect } from '@react-navigation/native'; 
 import apiClient from '../apiClient';
 import ProfileMenu from '../components/ProfileMenu';
 
@@ -30,33 +31,47 @@ export default function HomeScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [userRes, catRes, recipeRes] = await Promise.all([
-          apiClient.get('/users/me').catch(() => ({ data: { data: null } })),
-          apiClient.get('/category'),
-          apiClient.get('/recipes?size=30&sort=createdAt,desc'),
-        ]);
+  // 3. Thay useEffect bằng useFocusEffect để cập nhật dữ liệu mỗi khi quay lại màn hình này
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true; // Cờ để tránh update state khi component đã unmount
 
-        setUser(userRes.data.data);
-        setCategories(catRes.data.data || []);
-        setRecipes(recipeRes.data.data || []);
-      } catch (err) {
-        console.error('Lỗi tải dữ liệu Home:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
+      const fetchData = async () => {
+        // Chỉ hiện loading nếu danh sách đang trống (trải nghiệm mượt hơn)
+        if (recipes.length === 0) setLoading(true); 
+        
+        try {
+          const [userRes, catRes, recipeRes] = await Promise.all([
+            apiClient.get('/users/me').catch(() => ({ data: { data: null } })),
+            apiClient.get('/category'),
+            apiClient.get('/recipes?size=30&sort=createdAt,desc'),
+          ]);
 
-    fetchData();
-  }, []);
+          if (isActive) {
+            setUser(userRes.data.data);
+            setCategories(catRes.data.data || []);
+            setRecipes(recipeRes.data.data || []);
+          }
+        } catch (err) {
+          console.error('Lỗi tải dữ liệu Home:', err);
+        } finally {
+          if (isActive) setLoading(false);
+        }
+      };
+
+      fetchData();
+
+      return () => {
+        isActive = false; // Cleanup function
+      };
+    }, [])
+  );
 
   const avatarLetter = user?.firstName?.[0]?.toUpperCase() ||
                        user?.username?.[0]?.toUpperCase() || '?';
 
   const latestAvatar = user?.medias?.slice().reverse().find(m => m.type === 'AVATAR');
-  const avatarUrl = latestAvatar ? `${latestAvatar.media.url}?t=${Date.now()}` : null;
+  const avatarUrl = latestAvatar ? `${latestAvatar.media.url}?t=${Date.now()}` : null; // Thêm timestamp để refresh ảnh nếu đổi avatar
 
   if (loading) {
     return (
@@ -89,7 +104,6 @@ export default function HomeScreen({ navigation }) {
   const renderCategory = ({ item }) => (
     <TouchableOpacity 
       style={styles.categoryCard}
-      // 🔹 1. Điều hướng đến trang chi tiết danh mục
       onPress={() => navigation.navigate('Category', { id: item.id, name: item.name })}
     >
       <Text style={styles.categoryName}>{item.name}</Text>
@@ -98,7 +112,6 @@ export default function HomeScreen({ navigation }) {
 
   const ListHeader = () => (
     <>
-      {/* Header: Avatar - Search - Bell */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => setProfileMenuVisible(true)}>
           {avatarUrl ? (
@@ -129,7 +142,6 @@ export default function HomeScreen({ navigation }) {
       <View style={styles.section}>
         <View style={styles.sectionTitle}>
           <Text style={styles.sectionText}>Danh mục</Text>
-          {/* 🔹 2. Điều hướng đến trang xem tất cả danh mục */}
           <TouchableOpacity onPress={() => navigation.navigate('CategoryList')}>
             <Text style={styles.seeAll}>Xem tất cả →</Text>
           </TouchableOpacity>
@@ -144,7 +156,6 @@ export default function HomeScreen({ navigation }) {
         />
       </View>
 
-      {/* TIÊU ĐỀ CÔNG THỨC MỚI */}
       <Text style={styles.sectionTextLarge}>Công thức mới</Text>
     </>
   );
