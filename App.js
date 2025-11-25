@@ -27,6 +27,10 @@ import HistoryScreen from './screens/HistoryScreen';
 import FriendsScreen from './screens/FriendsScreen';
 import CategoryScreen from './screens/CategoryScreen';
 import CategoryListScreen from './screens/CategoryListScreen';
+import AdminDashboardScreen from './screens/admin/AdminDashboardScreen';
+import AdminUsersScreen from './screens/admin/AdminUsersScreen';
+import AdminRecipesScreen from './screens/admin/AdminRecipesScreen';
+import AdminCategoriesScreen from './screens/admin/AdminCategoriesScreen';
 
 // --- IMPORT COMPONENTS ---
 import BottomTabBar from './components/BottomTabBar';
@@ -41,7 +45,6 @@ const SearchStack = createNativeStackNavigator();
 const LikedStack = createNativeStackNavigator();
 const ProfileStack = createNativeStackNavigator();
 
-// --- ĐỊNH NGHĨA TỪNG STACK (Khai báo trực tiếp để tránh lỗi khoảng trắng) ---
 
 function HomeStackScreen() {
   return (
@@ -137,7 +140,6 @@ function MainTabs() {
         <Tab.Screen name="ProfileTab" component={ProfileStackScreen} />
       </Tab.Navigator>
 
-      {/* Nút Floating nằm đè lên TabBar */}
       <FloatingAddButton />
     </View>
   );
@@ -159,6 +161,11 @@ export default function App() {
 
         {/* Global Screens (Che mất BottomTab) */}
         <RootStack.Screen name="AddRecipe" component={AddRecipeScreen} />
+
+        <RootStack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+        <RootStack.Screen name="AdminUsers" component={AdminUsersScreen} />
+        <RootStack.Screen name="AdminRecipes" component={AdminRecipesScreen} />
+        <RootStack.Screen name="AdminCategories" component={AdminCategoriesScreen} />
       </RootStack.Navigator>
     </NavigationContainer>
   );
