@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-// 1. SỬA LỖI TEXT STRINGS: Dùng icon chuẩn của Expo
 import { Feather } from '@expo/vector-icons'; 
 import * as ImagePicker from 'expo-image-picker';
 import apiClient from '../apiClient';
