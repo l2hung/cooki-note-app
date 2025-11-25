@@ -2,7 +2,7 @@
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const API_BASE_URL = "http://192.168.0.102:8080/api/v1"; 
+const API_BASE_URL = "http://192.168.0.100:8080/api/v1"; //đổi thành địa chỉ backend và ip máy đang chạy
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
