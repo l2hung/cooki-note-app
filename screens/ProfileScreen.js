@@ -21,8 +21,8 @@ export default function ProfileScreen() {
   const { userId } = route.params || {};
 
   // State
-  const [user, setUser] = useState(null); // Profile đang xem
-  const [currentUser, setCurrentUser] = useState(null); // Người đang đăng nhập
+  const [user, setUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const [recipes, setRecipes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isFollowing, setIsFollowing] = useState(false);
@@ -32,19 +32,16 @@ export default function ProfileScreen() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // 1. Lấy thông tin CỦA TÔI trước (để so sánh ID)
+        // 1. Lấy thông tin CỦA TÔI
         const meRes = await apiClient.get('/users/me');
         const myData = meRes.data.data;
         setCurrentUser(myData);
 
         // 2. Xác định profile cần xem
         let targetProfile = null;
-        
-        // Logic quan trọng: Nếu không có userId HOẶC userId = 'me' HOẶC userId trùng với ID của tôi
         if (!userId || userId === 'me' || String(userId) === String(myData.id)) {
-            targetProfile = myData; // Xem chính mình
+            targetProfile = myData;
         } else {
-            // Xem người khác
             const userRes = await apiClient.get(`/users/${userId}`);
             targetProfile = userRes.data.data;
         }
@@ -55,9 +52,8 @@ export default function ProfileScreen() {
         const recipesRes = await apiClient.get(`/recipes/user/${targetProfile.id}?size=100&sort=createdAt,desc`);
         setRecipes(recipesRes.data.data || []);
 
-        // 4. Kiểm tra Follow (Chỉ khi xem người khác)
+        // 4. Kiểm tra Follow
         if (String(targetProfile.id) !== String(myData.id)) {
-          // Kiểm tra trong list followings của tôi có ID người này không
           const amIFollowing = myData.followings?.some(f => f.following.id === targetProfile.id);
           setIsFollowing(!!amIFollowing);
         }
@@ -73,12 +69,13 @@ export default function ProfileScreen() {
     fetchData();
   }, [userId]);
 
-  // --- LOGIC QUAN TRỌNG: Kiểm tra chủ sở hữu ---
-  // Chỉ đúng khi cả 2 object đã load xong và ID trùng nhau
+  // --- LOGIC KIỂM TRA ---
   const isOwnProfile = currentUser && user && (String(currentUser.id) === String(user.id));
+  
+  // 🔹 Kiểm tra quyền Admin (Dựa trên Role hoặc Email cụ thể)
+  const isAdmin = currentUser?.roles?.some(r => r.name === 'ROLE_ADMIN') || currentUser?.email === 'cookinote.contact@gmail.com';
 
   // --- HANDLERS ---
-
   const handleShare = async () => {
     try {
       const url = `https://cookinote.com/profile/${user.id}`;
@@ -95,11 +92,8 @@ export default function ProfileScreen() {
     setFollowLoading(true);
     
     const originalState = isFollowing;
-    
-    // Optimistic update
     setIsFollowing(!originalState);
     
-    // Cập nhật số lượng follower giả lập
     setUser(prev => ({
         ...prev,
         followers: originalState 
@@ -115,7 +109,7 @@ export default function ProfileScreen() {
       }
     } catch (err) {
       console.error(err);
-      setIsFollowing(originalState); // Revert
+      setIsFollowing(originalState);
       Alert.alert('Lỗi', 'Thao tác thất bại');
     } finally {
       setFollowLoading(false);
@@ -168,7 +162,7 @@ export default function ProfileScreen() {
         </Text>
       </View>
 
-      {/* Actions (Sử dụng isOwnProfile chuẩn) */}
+      {/* Actions */}
       <View style={styles.actionsContainer}>
         {isOwnProfile ? (
           <TouchableOpacity 
@@ -199,6 +193,17 @@ export default function ProfileScreen() {
           <Text style={styles.actionBtnText}>Chia sẻ</Text>
         </TouchableOpacity>
       </View>
+
+    
+      {isOwnProfile && isAdmin && (
+        <TouchableOpacity 
+          style={styles.adminBtn}
+          onPress={() => navigation.navigate('AdminDashboard')}
+        >
+          <Feather name="shield" size={16} color="#fff" />
+          <Text style={styles.adminBtnText}>Quản trị viên</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Tabs */}
       <View style={styles.tabContainer}>
@@ -256,13 +261,26 @@ const styles = StyleSheet.create({
   statNumber: { fontWeight: 'bold', color: '#333' },
   statSeparator: { marginHorizontal: 10, color: '#ccc' },
 
-  actionsContainer: { flexDirection: 'row', gap: 12, marginBottom: 24 },
+  actionsContainer: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   actionBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: '#ccc', gap: 6 },
   actionBtnText: { fontSize: 14, fontWeight: '500', color: '#333' },
   followBtn: { backgroundColor: '#007bff', borderColor: '#007bff' },
   followingBtn: { backgroundColor: '#f0f0f0', borderColor: '#ccc' },
 
-  tabContainer: { width: '100%', borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'center', marginTop: 10 },
+  // Style nút Admin
+  adminBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 24,
+    backgroundColor: '#1e293b', // Màu tối nổi bật
+    gap: 8,
+    marginBottom: 20, // Cách phần Tab ra
+  },
+  adminBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+
+  tabContainer: { width: '100%', borderBottomWidth: 1, borderBottomColor: '#eee', alignItems: 'center', marginTop: 0 },
   activeTab: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: '#007bff', gap: 8 },
   activeTabText: { color: '#007bff', fontWeight: '600', fontSize: 15 },
 
