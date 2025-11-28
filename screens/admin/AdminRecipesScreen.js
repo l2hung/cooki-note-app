@@ -22,16 +22,21 @@ export default function AdminRecipesScreen({ navigation }) {
 
   useEffect(() => { fetchRecipes(); }, []);
 
-  const handleBlock = (recipe) => {
-    // 1. Xác định trạng thái hiện tại (Mặc định null là ACTIVE)
-    const currentStatus = recipe.status || 'ACTIVE';
-    const isBlocked = currentStatus === 'BLOCKED'; // Hoặc trạng thái server trả về (ví dụ: BANNED)
+  // --- LOGIC KHÓA / MỞ KHÓA (CẬP NHẬT MỚI) ---
+  const handleToggleStatus = (recipe) => {
+    // 1. Xác định trạng thái hiện tại
+    // Nếu status là BLOCKED thì hành động tiếp theo là UNBLOCK và ngược lại
+    const currentStatus = recipe.isPublic === false ? 'BLOCKED' : 'ACTIVE'; // Dựa vào isPublic hoặc status từ API
+    const isBlocked = currentStatus === 'BLOCKED';
     
     const actionText = isBlocked ? 'MỞ KHÓA' : 'KHÓA';
-    
+    const confirmMessage = isBlocked 
+        ? `Bạn có muốn kích hoạt lại công thức "${recipe.title}"?` 
+        : `Bạn có chắc chắn muốn CHẶN hiển thị công thức "${recipe.title}"?`;
+
     Alert.alert(
       `Xác nhận ${actionText}`, 
-      `Bạn có chắc chắn muốn ${actionText} công thức "${recipe.title}"?`, 
+      confirmMessage,
       [
         { text: 'Hủy', style: 'cancel' },
         { 
@@ -39,21 +44,32 @@ export default function AdminRecipesScreen({ navigation }) {
           style: isBlocked ? 'default' : 'destructive', 
           onPress: async () => {
             try {
-              // 2. Gọi API Backend
-              await apiClient.patch(`/admin/recipe/${recipe.id}/block`);
+              // 2. Gọi API dựa trên trạng thái (SỬ DỤNG API MỚI)
+              if (isBlocked) {
+                  // Gọi API Mở khóa
+                  await apiClient.patch(`/admin/recipe/${recipe.id}/unblock`);
+              } else {
+                  // Gọi API Khóa
+                  await apiClient.patch(`/admin/recipe/${recipe.id}/block`);
+              }
               
-              // 3. QUAN TRỌNG: Cập nhật giao diện NGAY LẬP TỨC (Không gọi fetchRecipes lại)
-              setRecipes(prevList => prevList.map(item => {
+              // 3. Cập nhật UI ngay lập tức (Optimistic Update)
+              setRecipes(prev => prev.map(item => {
                 if (item.id === recipe.id) {
-                    // Đảo ngược trạng thái hiện tại
-                    const newStatus = isBlocked ? 'ACTIVE' : 'BLOCKED';
-                    return { ...item, status: newStatus };
+                    // Đảo ngược trạng thái isPublic/status
+                    // Nếu đang Blocked (isPublic=false) -> thành Active (isPublic=true)
+                    return { 
+                        ...item, 
+                        status: isBlocked ? 'ACTIVE' : 'BLOCKED',
+                        isPublic: !item.isPublic 
+                    };
                 }
                 return item;
               }));
 
               Alert.alert('Thành công', `Đã ${actionText} thành công.`);
             } catch(err) { 
+              console.log(err);
               Alert.alert('Lỗi', 'Thao tác thất bại. Vui lòng thử lại.'); 
             }
           }
@@ -65,9 +81,10 @@ export default function AdminRecipesScreen({ navigation }) {
   const renderItem = ({ item }) => {
     const recipeImage = item.medias?.[0]?.media?.url;
     
-    // Xử lý hiển thị trạng thái
-    const currentStatus = item.status || 'ACTIVE';
-    const isActive = currentStatus === 'ACTIVE';
+    // Logic hiển thị: Ưu tiên dùng isPublic nếu có, hoặc fallback sang status
+
+    const isBlocked = item.isPublic === false || item.status === 'BLOCKED';
+    const displayStatus = isBlocked ? 'BLOCKED' : 'ACTIVE';
 
     return (
       <View style={styles.card}>
@@ -77,25 +94,29 @@ export default function AdminRecipesScreen({ navigation }) {
         />
 
         <View style={styles.info}>
-          <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.author}>Bởi: {item.user?.username || 'Ẩn danh'}</Text>
+          <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
           
+          <View style={styles.authorRow}>
+            <Feather name="user" size={12} color="#666" />
+            <Text style={styles.author}> {item.user?.username || 'Ẩn danh'}</Text>
+          </View>
+
           {/* Badge hiển thị trạng thái */}
-          <View style={[styles.badge, isActive ? styles.activeBadge : styles.blockedBadge]}>
-            <Text style={[styles.badgeText, isActive ? styles.activeText : styles.blockedText]}>
-              {currentStatus}
+          <View style={[styles.badge, !isBlocked ? styles.activeBadge : styles.blockedBadge]}>
+            <Text style={[styles.badgeText, !isBlocked ? styles.activeText : styles.blockedText]}>
+              {displayStatus}
             </Text>
           </View>
         </View>
 
-        {/* Nút Hành động: Đỏ (Khóa) / Xanh (Mở) */}
+        {/* Nút Hành động */}
         <TouchableOpacity 
-          onPress={() => handleBlock(item)} 
-          style={[styles.actionBtn, isActive ? styles.blockBtn : styles.activeBtn]}
+          onPress={() => handleToggleStatus(item)} 
+          style={[styles.actionBtn, !isBlocked ? styles.blockBtn : styles.activeBtn]}
         >
-          {/* Icon: Lock (để khóa) / Unlock (để mở) */}
+          {/* Nếu chưa khóa -> Hiện nút đỏ (Lock). Nếu đã khóa -> Hiện nút xanh (Unlock) */}
           <Feather 
-            name={isActive ? "lock" : "unlock"} 
+            name={!isBlocked ? "lock" : "unlock"} 
             size={18} 
             color="#fff" 
           />
@@ -122,9 +143,7 @@ export default function AdminRecipesScreen({ navigation }) {
         refreshing={loading}
         onRefresh={fetchRecipes}
         ListEmptyComponent={
-            <Text style={{textAlign: 'center', marginTop: 20, color: '#888'}}>
-                Không có công thức nào.
-            </Text>
+          <Text style={styles.emptyText}>Không có công thức nào.</Text>
         }
       />
     </SafeAreaView>
@@ -146,6 +165,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#333' },
   
   list: { padding: 16 },
+  emptyText: { textAlign: 'center', marginTop: 30, color: '#888' },
 
   card: { 
     flexDirection: 'row', 
@@ -161,28 +181,23 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   image: { 
-    width: 60, 
-    height: 60, 
+    width: 70, 
+    height: 70, 
     borderRadius: 8, 
     marginRight: 12, 
     backgroundColor: '#eee' 
   },
-  info: { flex: 1 },
+  info: { flex: 1, justifyContent: 'center' },
   title: { 
     fontWeight: '600', 
     fontSize: 15, 
     color: '#333', 
     marginBottom: 4 
   },
-  author: { color: '#666', fontSize: 12, marginBottom: 4 },
+  authorRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  author: { color: '#666', fontSize: 12 },
   
-  // Badge Styles
-  badge: { 
-    paddingHorizontal: 8, 
-    paddingVertical: 2, 
-    borderRadius: 4, 
-    alignSelf: 'flex-start' 
-  },
+  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
   activeBadge: { backgroundColor: '#dcfce7' }, 
   blockedBadge: { backgroundColor: '#fee2e2' }, 
   
@@ -190,7 +205,6 @@ const styles = StyleSheet.create({
   activeText: { color: '#166534' }, 
   blockedText: { color: '#991b1b' }, 
 
-  // Button Styles
   actionBtn: { 
     width: 36, 
     height: 36, 
@@ -199,6 +213,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center', 
     marginLeft: 8 
   },
-  blockBtn: { backgroundColor: '#ef4444' }, 
-  activeBtn: { backgroundColor: '#10b981' }, 
+  blockBtn: { backgroundColor: '#ef4444' }, // Nút đỏ (để khóa)
+  activeBtn: { backgroundColor: '#10b981' }, // Nút xanh (để mở khóa)
 });
