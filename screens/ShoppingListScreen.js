@@ -235,7 +235,16 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f0f0f0',
     backgroundColor: '#fff'
   },
-  cardTitle: { fontSize: 17, fontWeight: '600', color: '#333', marginBottom: 4 },
+  cardTitle: { 
+  fontSize: 17,
+  fontWeight: '600',
+  color: '#333',
+  marginBottom: 4,
+  maxWidth: 250,        
+  flexShrink: 1,       
+  flexWrap: 'wrap'      
+},
+
   cardDate: { fontSize: 13, color: '#007bff', fontWeight: '500' },
   deleteBtn: { padding: 8 },
 
