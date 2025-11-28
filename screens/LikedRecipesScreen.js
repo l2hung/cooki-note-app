@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react'; // 1. Thêm useCallback
 import { 
   View, 
   Text, 
@@ -10,9 +10,9 @@ import {
   ActivityIndicator 
 } from 'react-native';
 import apiClient from '../apiClient';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native'; // 2. Thêm useFocusEffect
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Feather from 'react-native-vector-icons/Feather'; // 🔹 Import Icon Feather
+import Feather from 'react-native-vector-icons/Feather';
 
 export default function LikedRecipesScreen() {
   const navigation = useNavigation();
@@ -20,12 +20,35 @@ export default function LikedRecipesScreen() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    apiClient.get('/recipes/like')
-      .then(res => setRecipes(res.data.data || []))
-      .catch(() => setRecipes([]))
-      .finally(() => setLoading(false));
-  }, []);
+  // 3. Sử dụng useFocusEffect để tải lại danh sách mỗi khi màn hình được hiển thị
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const fetchLikedRecipes = async () => {
+        // Nếu danh sách đang trống thì hiện loading, nếu có rồi thì update ngầm
+        if (recipes.length === 0) setLoading(true);
+
+        try {
+          const res = await apiClient.get('/recipes/like');
+          if (isActive) {
+            setRecipes(res.data.data || []);
+          }
+        } catch (err) {
+          console.error(err);
+          if (isActive) setRecipes([]);
+        } finally {
+          if (isActive) setLoading(false);
+        }
+      };
+
+      fetchLikedRecipes();
+
+      return () => {
+        isActive = false;
+      };
+    }, [])
+  );
 
   const filtered = recipes.filter(r => r.title.toLowerCase().includes(search.toLowerCase()));
 
@@ -64,30 +87,29 @@ export default function LikedRecipesScreen() {
             style={styles.searchInput} 
           />
         </View>
-        {/* Placeholder view để cân bằng header nếu cần, ở đây ta để trống */}
         <View style={{ width: 24 }} /> 
       </View>
 
       {/* CONTENT */}
-      {loading ? (
+      {loading && recipes.length === 0 ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color="#007bff" />
           <Text style={styles.loadingText}>Đang tải...</Text>
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.emptyState}>
-          {/* Empty Icon giống web */}
           <Feather name="book-open" size={64} color="#ccc" style={{ marginBottom: 16 }} />
-          <Text style={styles.emptyText}>Bạn chưa lưu công thức nào.</Text>
-          <Text style={styles.emptySubText}>Hãy khám phá và nhấn thích nhé!</Text>
+          <Text style={styles.emptyText}>
+             {search ? 'Không tìm thấy công thức nào.' : 'Bạn chưa lưu công thức nào.'}
+          </Text>
+          {!search && <Text style={styles.emptySubText}>Hãy khám phá và nhấn thích nhé!</Text>}
         </View>
       ) : (
         <FlatList
           data={filtered}
           numColumns={2}
-          key={2} // Force re-render khi đổi số cột (nếu cần)
+          key={2} 
           renderItem={renderItem}
-          // Căn chỉnh Grid giống CSS: gap 1.5rem ~ 24px, padding xung quanh
           columnWrapperStyle={{ justifyContent: 'space-between' }}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
@@ -100,16 +122,14 @@ export default function LikedRecipesScreen() {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#f4f5f7' // Khớp bg-color CSS
+    backgroundColor: '#f4f5f7' 
   },
-
-  // HEADER STYLES
   header: { 
     flexDirection: 'row', 
     alignItems: 'center', 
-    paddingHorizontal: 24, // padding: 1rem 1.5rem ~ 16px 24px
+    paddingHorizontal: 24, 
     paddingVertical: 16,
-    gap: 16, // gap: 1rem
+    gap: 16, 
   },
   backButton: {
     padding: 0,
@@ -120,33 +140,29 @@ const styles = StyleSheet.create({
     flex: 1, 
     flexDirection: 'row', 
     alignItems: 'center', 
-    backgroundColor: '#f4f5f7', // Khớp background thanh search
-    borderRadius: 50, // border-radius: 50px
+    backgroundColor: '#f4f5f7', 
+    borderRadius: 50, 
     paddingHorizontal: 16, 
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0', // border: 1px solid #e0e0e0
+    borderColor: '#e0e0e0', 
   },
   searchInput: {
     flex: 1,
-    fontSize: 16, // font-size: 1rem
+    fontSize: 16, 
     color: '#333',
-    paddingVertical: 0, // Fix text lệch trên Android
+    paddingVertical: 0, 
   },
-
-  // CARD STYLES
   listContent: {
-    paddingHorizontal: 24, // padding container
+    paddingHorizontal: 24, 
     paddingBottom: 20,
   },
   card: { 
     backgroundColor: '#fff', 
     borderRadius: 12, 
-    marginBottom: 24, // gap dọc giữa các hàng
+    marginBottom: 24, 
     overflow: 'hidden', 
-    width: '47%', // Để chừa khoảng trống ở giữa (gap)
-    
-    // Box shadow giống CSS box-shadow: 0 4px 8px rgba(0,0,0,0.05)
+    width: '47%', 
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.05,
@@ -155,25 +171,23 @@ const styles = StyleSheet.create({
   },
   img: { 
     width: '100%', 
-    height: 120, // height: 120px
+    height: 120, 
     backgroundColor: '#eee',
   },
   cardContent: {
     paddingVertical: 8,
-    paddingHorizontal: 12, // margin: 0.5rem 0.75rem
+    paddingHorizontal: 12, 
   },
   title: { 
     fontWeight: '600', 
-    fontSize: 16, // font-size: 1rem
+    fontSize: 16, 
     color: '#333',
     marginBottom: 4,
   },
   author: { 
     color: '#777', 
-    fontSize: 13, // font-size: 0.8rem
+    fontSize: 13, 
   },
-
-  // EMPTY STATE & LOADING
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -188,7 +202,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center', 
-    marginTop: -40, // Đẩy lên một chút cho cân đối
+    marginTop: -40, 
   },
   emptyText: { 
     fontSize: 18, 
