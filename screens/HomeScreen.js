@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'; 
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,11 @@ import {
   StyleSheet,
   Dimensions,
   ActivityIndicator,
+  RefreshControl // Thêm RefreshControl để kéo xuống làm mới
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons'; 
-import { useFocusEffect } from '@react-navigation/native'; 
+import { useFocusEffect } from '@react-navigation/native';
 import apiClient from '../apiClient';
 import ProfileMenu from '../components/ProfileMenu';
 
@@ -28,60 +29,45 @@ export default function HomeScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [categories, setCategories] = useState([]);
   const [recipes, setRecipes] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // Loading lần đầu
+  const [refreshing, setRefreshing] = useState(false); // Loading khi kéo xuống
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
 
-  // 3. Thay useEffect bằng useFocusEffect để cập nhật dữ liệu mỗi khi quay lại màn hình này
+  // Hàm tải dữ liệu chung
+  const fetchData = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    
+    try {
+      const [userRes, catRes, recipeRes] = await Promise.all([
+        apiClient.get('/users/me').catch(() => ({ data: { data: null } })),
+        apiClient.get('/category'),
+        apiClient.get('/recipes?size=30&sort=createdAt,desc'),
+      ]);
+
+      setUser(userRes.data.data);
+      setCategories(catRes.data.data || []);
+      setRecipes(recipeRes.data.data || []);
+    } catch (err) {
+      console.error('Lỗi tải dữ liệu Home:', err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  // Dùng useFocusEffect để tự động tải lại mỗi khi màn hình được focus
   useFocusEffect(
     useCallback(() => {
-      let isActive = true; // Cờ để tránh update state khi component đã unmount
-
-      const fetchData = async () => {
-        // Chỉ hiện loading nếu danh sách đang trống (trải nghiệm mượt hơn)
-        if (recipes.length === 0) setLoading(true); 
-        
-        try {
-          const [userRes, catRes, recipeRes] = await Promise.all([
-            apiClient.get('/users/me').catch(() => ({ data: { data: null } })),
-            apiClient.get('/category'),
-            apiClient.get('/recipes?size=30&sort=createdAt,desc'),
-          ]);
-
-          if (isActive) {
-            setUser(userRes.data.data);
-            setCategories(catRes.data.data || []);
-            setRecipes(recipeRes.data.data || []);
-          }
-        } catch (err) {
-          console.error('Lỗi tải dữ liệu Home:', err);
-        } finally {
-          if (isActive) setLoading(false);
-        }
-      };
-
       fetchData();
-
-      return () => {
-        isActive = false; // Cleanup function
-      };
     }, [])
   );
 
-  const avatarLetter = user?.firstName?.[0]?.toUpperCase() ||
-                       user?.username?.[0]?.toUpperCase() || '?';
-
+  // Avatar logic
+  const avatarLetter = user?.firstName?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase() || '?';
   const latestAvatar = user?.medias?.slice().reverse().find(m => m.type === 'AVATAR');
-  const avatarUrl = latestAvatar ? `${latestAvatar.media.url}?t=${Date.now()}` : null; // Thêm timestamp để refresh ảnh nếu đổi avatar
+  const avatarUrl = latestAvatar ? `${latestAvatar.media.url}?t=${Date.now()}` : null;
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#f97316" />
-        <Text style={styles.loadingText}>Đang tải...</Text>
-      </View>
-    );
-  }
-
+  // Render Item Công thức
   const renderRecipe = ({ item }) => (
     <TouchableOpacity 
       style={styles.recipeCard} 
@@ -101,6 +87,7 @@ export default function HomeScreen({ navigation }) {
     </TouchableOpacity>
   );
 
+  // Render Item Danh mục
   const renderCategory = ({ item }) => (
     <TouchableOpacity 
       style={styles.categoryCard}
@@ -112,6 +99,7 @@ export default function HomeScreen({ navigation }) {
 
   const ListHeader = () => (
     <>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => setProfileMenuVisible(true)}>
           {avatarUrl ? (
@@ -138,7 +126,7 @@ export default function HomeScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* DANH MỤC NGANG */}
+      {/* Danh mục Ngang */}
       <View style={styles.section}>
         <View style={styles.sectionTitle}>
           <Text style={styles.sectionText}>Danh mục</Text>
@@ -156,9 +144,20 @@ export default function HomeScreen({ navigation }) {
         />
       </View>
 
+      {/* Tiêu đề Công thức mới */}
       <Text style={styles.sectionTextLarge}>Công thức mới</Text>
     </>
   );
+
+  // Nếu là lần load đầu tiên và chưa có data thì hiện loading full màn hình
+  if (loading && recipes.length === 0) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#f97316" />
+        <Text style={styles.loadingText}>Đang tải...</Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -171,6 +170,10 @@ export default function HomeScreen({ navigation }) {
         ListHeaderComponent={ListHeader}
         contentContainerStyle={styles.recipesGrid}
         showsVerticalScrollIndicator={false}
+        // Thêm tính năng kéo xuống để làm mới thủ công
+        refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} colors={["#f97316"]} />
+        }
       />
 
       <ProfileMenu
