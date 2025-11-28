@@ -8,11 +8,11 @@ import {
   StyleSheet,
   Dimensions,
   ActivityIndicator,
-  RefreshControl // Thêm RefreshControl để kéo xuống làm mới
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons'; 
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native'; 
 import apiClient from '../apiClient';
 import ProfileMenu from '../components/ProfileMenu';
 
@@ -29,24 +29,31 @@ export default function HomeScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [categories, setCategories] = useState([]);
   const [recipes, setRecipes] = useState([]);
-  const [loading, setLoading] = useState(true); // Loading lần đầu
-  const [refreshing, setRefreshing] = useState(false); // Loading khi kéo xuống
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
 
-  // Hàm tải dữ liệu chung
-  const fetchData = async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    
+  const fetchData = async (isPullToRefresh = false) => {
+    if (isPullToRefresh) setRefreshing(true);
+
     try {
       const [userRes, catRes, recipeRes] = await Promise.all([
         apiClient.get('/users/me').catch(() => ({ data: { data: null } })),
         apiClient.get('/category'),
-        apiClient.get('/recipes?size=30&sort=createdAt,desc'),
+        apiClient.get(`/recipes?size=30&sort=createdAt,desc&t=${Date.now()}`),
       ]);
 
       setUser(userRes.data.data);
       setCategories(catRes.data.data || []);
-      setRecipes(recipeRes.data.data || []);
+
+      // --- Sort recipes theo createdAt giảm dần ---
+      const fetchedRecipes = recipeRes.data.data || [];
+      const sortedRecipes = fetchedRecipes
+        .slice()
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      setRecipes(sortedRecipes);
+
     } catch (err) {
       console.error('Lỗi tải dữ liệu Home:', err);
     } finally {
@@ -55,7 +62,6 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  // Dùng useFocusEffect để tự động tải lại mỗi khi màn hình được focus
   useFocusEffect(
     useCallback(() => {
       fetchData();
@@ -67,7 +73,7 @@ export default function HomeScreen({ navigation }) {
   const latestAvatar = user?.medias?.slice().reverse().find(m => m.type === 'AVATAR');
   const avatarUrl = latestAvatar ? `${latestAvatar.media.url}?t=${Date.now()}` : null;
 
-  // Render Item Công thức
+  // --- RENDER RECIPE ---
   const renderRecipe = ({ item }) => (
     <TouchableOpacity 
       style={styles.recipeCard} 
@@ -75,19 +81,14 @@ export default function HomeScreen({ navigation }) {
       onPress={() => navigation.navigate('RecipeDetail', { id: item.id })}
     >
       <Image
-        source={{
-          uri: item.medias?.[0]?.media?.url || 'https://via.placeholder.com/400x300/eee/aaa?text=No+Image',
-        }}
+        source={{ uri: item.medias?.[0]?.media?.url || 'https://via.placeholder.com/400x300/eee/aaa?text=No+Image' }}
         style={styles.recipeImage}
       />
-      <Text style={styles.recipeTitle} numberOfLines={2}>
-        {item.title}
-      </Text>
+      <Text style={styles.recipeTitle} numberOfLines={2}>{item.title}</Text>
       <Text style={styles.recipeAuthor}>bởi {item.user?.username || 'Ẩn danh'}</Text>
     </TouchableOpacity>
   );
 
-  // Render Item Danh mục
   const renderCategory = ({ item }) => (
     <TouchableOpacity 
       style={styles.categoryCard}
@@ -113,20 +114,15 @@ export default function HomeScreen({ navigation }) {
 
         <TouchableOpacity style={styles.searchBar} onPress={() => navigation.navigate('SearchTab')}>
           <Feather name="search" size={20} color="#94a3b8" style={{ marginRight: 8 }} />
-          <Text style={styles.searchPlaceholder} numberOfLines={1}>
-            Tìm kiếm công thức...
-          </Text>
+          <Text style={styles.searchPlaceholder} numberOfLines={1}>Tìm kiếm công thức...</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.notificationBtn} 
-          onPress={() => navigation.navigate('NotificationTab')}
-        >
+        <TouchableOpacity style={styles.notificationBtn} onPress={() => navigation.navigate('NotificationTab')}>
           <Feather name="bell" size={24} color="#333" />
         </TouchableOpacity>
       </View>
 
-      {/* Danh mục Ngang */}
+      {/* Categories */}
       <View style={styles.section}>
         <View style={styles.sectionTitle}>
           <Text style={styles.sectionText}>Danh mục</Text>
@@ -144,12 +140,10 @@ export default function HomeScreen({ navigation }) {
         />
       </View>
 
-      {/* Tiêu đề Công thức mới */}
       <Text style={styles.sectionTextLarge}>Công thức mới</Text>
     </>
   );
 
-  // Nếu là lần load đầu tiên và chưa có data thì hiện loading full màn hình
   if (loading && recipes.length === 0) {
     return (
       <View style={styles.loadingContainer}>
@@ -164,15 +158,14 @@ export default function HomeScreen({ navigation }) {
       <FlatList
         data={recipes}
         numColumns={getColumns()}
-        key={getColumns()} 
+        key={getColumns()}
         renderItem={renderRecipe}
         keyExtractor={(item) => item.id.toString()}
         ListHeaderComponent={ListHeader}
         contentContainerStyle={styles.recipesGrid}
         showsVerticalScrollIndicator={false}
-        // Thêm tính năng kéo xuống để làm mới thủ công
         refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} colors={["#f97316"]} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} colors={['#f97316']} />
         }
       />
 
@@ -232,11 +225,7 @@ const styles = StyleSheet.create({
   },
   searchPlaceholder: { color: '#94a3b8', fontSize: 15 }, 
 
-  notificationBtn: {
-    padding: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  notificationBtn: { padding: 8, justifyContent: 'center', alignItems: 'center' },
 
   section: { marginTop: 24 },
   sectionTitle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 16 },
