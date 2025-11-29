@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useIsFocused } from '@react-navigation/native';
 import Feather from 'react-native-vector-icons/Feather';
 import apiClient from '../apiClient';
 
@@ -19,6 +19,7 @@ export default function ProfileScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const { userId } = route.params || {};
+  const isFocused = useIsFocused();
 
   // State
   const [user, setUser] = useState(null);
@@ -28,54 +29,46 @@ export default function ProfileScreen() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        // 1. Lấy thông tin CỦA TÔI
-        const meRes = await apiClient.get('/users/me');
-        const myData = meRes.data.data;
-        setCurrentUser(myData);
+  // --- Fetch profile & recipes
+  const fetchProfileData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const meRes = await apiClient.get('/users/me');
+      const myData = meRes.data.data;
+      setCurrentUser(myData);
 
-        // 2. Xác định profile cần xem
-        let targetProfile = null;
-        if (!userId || userId === 'me' || String(userId) === String(myData.id)) {
-            targetProfile = myData;
-        } else {
-            const userRes = await apiClient.get(`/users/${userId}`);
-            targetProfile = userRes.data.data;
-        }
-        
-        setUser(targetProfile);
-
-        // 3. Lấy danh sách công thức
-        const recipesRes = await apiClient.get(`/recipes/user/${targetProfile.id}?size=100&sort=createdAt,desc`);
-        setRecipes(recipesRes.data.data || []);
-
-        // 4. Kiểm tra Follow
-        if (String(targetProfile.id) !== String(myData.id)) {
-          const amIFollowing = myData.followings?.some(f => f.following.id === targetProfile.id);
-          setIsFollowing(!!amIFollowing);
-        }
-
-      } catch (err) {
-        console.error(err);
-        Alert.alert('Lỗi', 'Không thể tải thông tin người dùng');
-      } finally {
-        setLoading(false);
+      let targetProfile = null;
+      if (!userId || userId === 'me' || String(userId) === String(myData.id)) {
+        targetProfile = myData;
+      } else {
+        const userRes = await apiClient.get(`/users/${userId}`);
+        targetProfile = userRes.data.data;
       }
-    };
+      setUser(targetProfile);
 
-    fetchData();
+      // Lấy danh sách công thức
+      const recipesRes = await apiClient.get(`/recipes/user/${targetProfile.id}?size=100&sort=createdAt,desc`);
+      setRecipes(recipesRes.data.data || []);
+
+      // Kiểm tra follow
+      if (String(targetProfile.id) !== String(myData.id)) {
+        const amIFollowing = myData.followings?.some(f => f.following.id === targetProfile.id);
+        setIsFollowing(!!amIFollowing);
+      }
+    } catch (err) {
+      console.error(err);
+      Alert.alert('Lỗi', 'Không thể tải thông tin người dùng');
+    } finally {
+      setLoading(false);
+    }
   }, [userId]);
 
-  // --- LOGIC KIỂM TRA ---
-  const isOwnProfile = currentUser && user && (String(currentUser.id) === String(user.id));
-  
-  // 🔹 Kiểm tra quyền Admin (Dựa trên Role hoặc Email cụ thể)
-  const isAdmin = currentUser?.roles?.some(r => r.name === 'ROLE_ADMIN') || currentUser?.email === 'cookinote.contact@gmail.com';
+  // FIX: Refresh khi quay lại từ EditProfile
+  useEffect(() => {
+    if (isFocused) fetchProfileData();
+  }, [isFocused, fetchProfileData, route.params?.refresh]);
 
-  // --- HANDLERS ---
+  // --- Handlers ---
   const handleShare = async () => {
     try {
       const url = `https://cookinote.com/profile/${user.id}`;
@@ -90,15 +83,15 @@ export default function ProfileScreen() {
   const handleFollowToggle = async () => {
     if (followLoading || !user) return;
     setFollowLoading(true);
-    
+
     const originalState = isFollowing;
     setIsFollowing(!originalState);
-    
+
     setUser(prev => ({
-        ...prev,
-        followers: originalState 
-            ? (prev.followers || []).slice(0, -1) 
-            : [...(prev.followers || []), {}] 
+      ...prev,
+      followers: originalState
+        ? (prev.followers || []).slice(0, -1)
+        : [...(prev.followers || []), {}]
     }));
 
     try {
@@ -116,19 +109,39 @@ export default function ProfileScreen() {
     }
   };
 
-  // Helpers
+  const handleDeleteRecipe = async (recipeId) => {
+    Alert.alert('Xác nhận', 'Bạn có muốn xóa công thức này?', [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Xóa', style: 'destructive', onPress: async () => {
+          try {
+            await apiClient.delete(`/recipes/${recipeId}`);
+            setRecipes(prev => prev.filter(r => r.id !== recipeId));
+            Alert.alert('Thành công', 'Đã xóa công thức');
+          } catch (err) {
+            console.error(err);
+            Alert.alert('Lỗi', 'Xóa thất bại');
+          }
+        }
+      }
+    ]);
+  };
+
+  const isOwnProfile = currentUser && user && (String(currentUser.id) === String(user.id));
+  const isAdmin = currentUser?.roles?.some(r => r.name === 'ROLE_ADMIN') || currentUser?.email === 'cookinote.contact@gmail.com';
   const avatarUrl = user?.medias?.slice().reverse().find(m => m.type === 'AVATAR')?.media?.url;
   const avatarLetter = (user?.firstName?.[0] || user?.username?.[0] || '?').toUpperCase();
 
   const renderRecipeItem = ({ item }) => (
-    <TouchableOpacity 
-      style={styles.recipeCard} 
+    <TouchableOpacity
+      style={styles.recipeCard}
       onPress={() => navigation.navigate('RecipeDetail', { id: item.id })}
       activeOpacity={0.9}
+      onLongPress={isOwnProfile ? () => handleDeleteRecipe(item.id) : null}
     >
-      <Image 
-        source={{ uri: item.medias?.[0]?.media?.url || 'https://via.placeholder.com/300' }} 
-        style={styles.recipeImg} 
+      <Image
+        source={{ uri: item.medias?.[0]?.media?.url || 'https://via.placeholder.com/300' }}
+        style={styles.recipeImg}
       />
       <Text style={styles.recipeTitle} numberOfLines={2}>{item.title}</Text>
     </TouchableOpacity>
@@ -136,7 +149,6 @@ export default function ProfileScreen() {
 
   const ListHeader = () => (
     <View style={styles.profileContainer}>
-      {/* Avatar */}
       {avatarUrl ? (
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
       ) : (
@@ -145,13 +157,9 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      {/* Tên */}
-      <Text style={styles.name}>
-        {user?.firstName} {user?.lastName}
-      </Text>
+      <Text style={styles.name}>{user?.firstName} {user?.lastName}</Text>
       <Text style={styles.username}>@{user?.username}</Text>
 
-      {/* Stats */}
       <View style={styles.statsContainer}>
         <Text style={styles.statText}>
           <Text style={styles.statNumber}>{user?.followers?.length || 0}</Text> Người quan tâm
@@ -162,28 +170,27 @@ export default function ProfileScreen() {
         </Text>
       </View>
 
-      {/* Actions */}
       <View style={styles.actionsContainer}>
         {isOwnProfile ? (
-          <TouchableOpacity 
-            style={styles.actionBtn} 
-            onPress={() => navigation.navigate('EditProfile')}
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={() => navigation.navigate('EditProfile', { refresh: true })}
           >
             <Feather name="edit-2" size={16} color="#333" />
             <Text style={styles.actionBtnText}>Chỉnh sửa</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity 
-            style={[styles.actionBtn, isFollowing ? styles.followingBtn : styles.followBtn]} 
+          <TouchableOpacity
+            style={[styles.actionBtn, isFollowing ? styles.followingBtn : styles.followBtn]}
             onPress={handleFollowToggle}
             disabled={followLoading}
           >
             {followLoading ? (
-                <ActivityIndicator size="small" color={isFollowing ? "#333" : "#fff"} />
+              <ActivityIndicator size="small" color={isFollowing ? "#333" : "#fff"} />
             ) : (
-                <Text style={[styles.actionBtnText, !isFollowing && { color: '#fff' }]}>
-                    {isFollowing ? "Đang theo dõi" : "Theo dõi"}
-                </Text>
+              <Text style={[styles.actionBtnText, !isFollowing && { color: '#fff' }]}>
+                {isFollowing ? "Đang theo dõi" : "Theo dõi"}
+              </Text>
             )}
           </TouchableOpacity>
         )}
@@ -194,9 +201,8 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </View>
 
-    
       {isOwnProfile && isAdmin && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.adminBtn}
           onPress={() => navigation.navigate('AdminDashboard')}
         >
@@ -205,25 +211,24 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Tabs */}
       <View style={styles.tabContainer}>
         <View style={styles.activeTab}>
-            <Feather name="grid" size={18} color="#007bff" />
-            <Text style={styles.activeTabText}>Công thức đã đăng ({recipes.length})</Text>
+          <Feather name="grid" size={18} color="#007bff" />
+          <Text style={styles.activeTabText}>Công thức đã đăng ({recipes.length})</Text>
         </View>
       </View>
     </View>
   );
 
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#007bff" /></View>;
-  
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.navHeader}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Feather name="arrow-left" size={26} color="#333" />
         </TouchableOpacity>
-        <View style={{ width: 26 }} /> 
+        <View style={{ width: 26 }} />
       </View>
 
       <FlatList
@@ -235,7 +240,7 @@ export default function ProfileScreen() {
         columnWrapperStyle={styles.recipeList}
         contentContainerStyle={{ paddingBottom: 20 }}
         ListEmptyComponent={
-            <Text style={styles.emptyText}>Chưa có công thức nào.</Text>
+          <Text style={styles.emptyText}>Chưa có công thức nào.</Text>
         }
       />
     </SafeAreaView>
@@ -247,15 +252,15 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   navHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
   backBtn: { padding: 4 },
-  
+
   profileContainer: { alignItems: 'center', paddingTop: 10, paddingBottom: 20, backgroundColor: '#fff' },
   avatar: { width: 86, height: 86, borderRadius: 43, marginBottom: 12 },
   avatarPlaceholder: { width: 86, height: 86, borderRadius: 43, backgroundColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
   avatarLetter: { fontSize: 32, fontWeight: 'bold', color: '#888' },
-  
+
   name: { fontSize: 20, fontWeight: '700', color: '#333', marginBottom: 4 },
   username: { fontSize: 15, color: '#777', marginBottom: 16 },
-  
+
   statsContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
   statText: { fontSize: 14, color: '#555' },
   statNumber: { fontWeight: 'bold', color: '#333' },
@@ -267,16 +272,15 @@ const styles = StyleSheet.create({
   followBtn: { backgroundColor: '#007bff', borderColor: '#007bff' },
   followingBtn: { backgroundColor: '#f0f0f0', borderColor: '#ccc' },
 
-  // Style nút Admin
   adminBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 24,
-    backgroundColor: '#1e293b', // Màu tối nổi bật
+    backgroundColor: '#1e293b',
     gap: 8,
-    marginBottom: 20, // Cách phần Tab ra
+    marginBottom: 20,
   },
   adminBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
 
