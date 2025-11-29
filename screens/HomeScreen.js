@@ -8,7 +8,7 @@ import {
   StyleSheet,
   Dimensions,
   ActivityIndicator,
-  RefreshControl,
+  RefreshControl
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons'; 
@@ -29,30 +29,49 @@ export default function HomeScreen({ navigation }) {
   const [user, setUser] = useState(null);
   const [categories, setCategories] = useState([]);
   const [recipes, setRecipes] = useState([]);
-  const [loading, setLoading] = useState(true);
+  
+  const [loading, setLoading] = useState(true); 
   const [refreshing, setRefreshing] = useState(false);
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
+  
+  // 🔹 STATE MỚI: Kiểm tra có tin chưa đọc không
+  const [hasUnreadNoti, setHasUnreadNoti] = useState(false);
 
-  const fetchData = async (isPullToRefresh = false) => {
-    if (isPullToRefresh) setRefreshing(true);
-
+  const fetchData = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    
     try {
-      const [userRes, catRes, recipeRes] = await Promise.all([
+      const timestamp = new Date().getTime();
+
+      // 🔹 GỌI THÊM API NOTIFICATION
+      const [userRes, catRes, recipeRes, notiRes] = await Promise.all([
         apiClient.get('/users/me').catch(() => ({ data: { data: null } })),
         apiClient.get('/category'),
-        apiClient.get(`/recipes?size=30&sort=createdAt,desc&t=${Date.now()}`),
+        apiClient.get(`/recipes?size=30&sort=createdAt,desc&t=${timestamp}`),
+        // Lấy 10 thông báo mới nhất để check
+        apiClient.get('/notification/me?size=10&sort=createdAt,desc').catch(() => ({ data: { data: [] } }))
       ]);
 
       setUser(userRes.data.data);
       setCategories(catRes.data.data || []);
-
-      // --- Sort recipes theo createdAt giảm dần ---
+      
+      // Sắp xếp công thức (nếu cần thiết, dù server đã sort)
       const fetchedRecipes = recipeRes.data.data || [];
-      const sortedRecipes = fetchedRecipes
-        .slice()
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
+      const sortedRecipes = fetchedRecipes.slice().sort((a, b) => {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        if (!isNaN(dateA) && !isNaN(dateB) && dateA !== dateB) {
+            return dateB - dateA;
+        }
+        return b.id - a.id;
+      });
       setRecipes(sortedRecipes);
+
+      // 🔹 KIỂM TRA THÔNG BÁO CHƯA ĐỌC
+      const notifications = notiRes.data.data || [];
+      // Nếu tìm thấy ít nhất 1 thông báo có isRead = false
+      const hasUnread = notifications.some(n => n.isRead === false);
+      setHasUnreadNoti(hasUnread);
 
     } catch (err) {
       console.error('Lỗi tải dữ liệu Home:', err);
@@ -62,18 +81,17 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  // Tự động tải lại mỗi khi quay về màn hình Home
   useFocusEffect(
     useCallback(() => {
-      fetchData();
+      fetchData(); 
     }, [])
   );
 
-  // Avatar logic
   const avatarLetter = user?.firstName?.[0]?.toUpperCase() || user?.username?.[0]?.toUpperCase() || '?';
   const latestAvatar = user?.medias?.slice().reverse().find(m => m.type === 'AVATAR');
   const avatarUrl = latestAvatar ? `${latestAvatar.media.url}?t=${Date.now()}` : null;
 
-  // --- RENDER RECIPE ---
   const renderRecipe = ({ item }) => (
     <TouchableOpacity 
       style={styles.recipeCard} 
@@ -100,7 +118,6 @@ export default function HomeScreen({ navigation }) {
 
   const ListHeader = () => (
     <>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => setProfileMenuVisible(true)}>
           {avatarUrl ? (
@@ -114,15 +131,22 @@ export default function HomeScreen({ navigation }) {
 
         <TouchableOpacity style={styles.searchBar} onPress={() => navigation.navigate('SearchTab')}>
           <Feather name="search" size={20} color="#94a3b8" style={{ marginRight: 8 }} />
-          <Text style={styles.searchPlaceholder} numberOfLines={1}>Tìm kiếm công thức...</Text>
+          <Text style={styles.searchPlaceholder} numberOfLines={1}>
+            Tìm kiếm công thức...
+          </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.notificationBtn} onPress={() => navigation.navigate('NotificationTab')}>
+        <TouchableOpacity 
+          style={styles.notificationBtn} 
+          onPress={() => navigation.navigate('NotificationTab')}
+        >
           <Feather name="bell" size={24} color="#333" />
+          {/* 🔹 HIỂN THỊ CHẤM ĐỎ NẾU CÓ TIN CHƯA ĐỌC */}
+          {hasUnreadNoti && <View style={styles.redDot} />}
         </TouchableOpacity>
       </View>
 
-      {/* Categories */}
+      {/* DANH MỤC */}
       <View style={styles.section}>
         <View style={styles.sectionTitle}>
           <Text style={styles.sectionText}>Danh mục</Text>
@@ -158,14 +182,14 @@ export default function HomeScreen({ navigation }) {
       <FlatList
         data={recipes}
         numColumns={getColumns()}
-        key={getColumns()}
+        key={getColumns()} 
         renderItem={renderRecipe}
         keyExtractor={(item) => item.id.toString()}
         ListHeaderComponent={ListHeader}
         contentContainerStyle={styles.recipesGrid}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} colors={['#f97316']} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} colors={["#f97316"]} />
         }
       />
 
@@ -225,7 +249,25 @@ const styles = StyleSheet.create({
   },
   searchPlaceholder: { color: '#94a3b8', fontSize: 15 }, 
 
-  notificationBtn: { padding: 8, justifyContent: 'center', alignItems: 'center' },
+  notificationBtn: {
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative', // 🔹 Để đặt chấm đỏ tuyệt đối
+  },
+  
+  // 🔹 Style cho chấm đỏ
+  redDot: {
+    position: 'absolute',
+    top: 6,
+    right: 8,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#ff4757', // Màu đỏ
+    borderWidth: 1.5,
+    borderColor: '#f9fafb', // Viền trùng màu nền để tạo khoảng cách
+  },
 
   section: { marginTop: 24 },
   sectionTitle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 16 },
