@@ -187,10 +187,10 @@ export default function RecipeDetailScreen() {
             {/* Nhóm nút Sửa/Xóa (Chỉ hiện nếu là chủ sở hữu) */}
             {isOwner && (
                 <View style={styles.headerActions}>
-                    <TouchableOpacity onPress={handleEdit} style={styles.editBtn}>
+                     {/* <TouchableOpacity onPress={handleEdit} style={styles.editBtn}>
                         <Feather name="edit-2" size={18} color="#007bff" />
                         <Text style={styles.editText}>Sửa</Text>
-                    </TouchableOpacity>
+                    </TouchableOpacity> */}
 
                     <TouchableOpacity onPress={handleDelete} style={styles.deleteBtn}>
                         <Feather name="trash-2" size={18} color="#ef4444" />
