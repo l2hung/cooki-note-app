@@ -6,7 +6,7 @@ const API_BASE_URL = "http://192.168.0.100:8080/api/v1"; //đổi thành địa 
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: 60000,
   headers: { "Content-Type": "application/json" },
 });
 
