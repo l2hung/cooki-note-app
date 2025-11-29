@@ -20,7 +20,6 @@ export default function NotificationScreen() {
   const [loading, setLoading] = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
 
-  // 1. Fetch Notifications
   const fetchNotifications = async () => {
     try {
       const res = await apiClient.get('/notification/me');
@@ -36,13 +35,10 @@ export default function NotificationScreen() {
     fetchNotifications();
   }, []);
 
-  // 2. Handle Mark as Read & Navigate
   const handleNotificationPress = async (item) => {
-    // Nếu chưa đọc -> Gọi API đánh dấu đã đọc
     if (!item.isRead) {
       try {
         await apiClient.patch(`/notification/mark-as-read/${item.id}`);
-        // Cập nhật UI ngay lập tức
         setNotifications(prev => prev.map(n => 
           n.id === item.id ? { ...n, isRead: true } : n
         ));
@@ -51,19 +47,16 @@ export default function NotificationScreen() {
       }
     }
 
-    // Điều hướng dựa trên loại thông báo 
     if (item.targetId) {
         navigation.navigate('RecipeDetail', { id: item.targetId });
     }
   };
 
-  // 3. Handle Mark All as Read
   const handleMarkAllRead = async () => {
     if (markingAll) return;
     setMarkingAll(true);
     try {
       await apiClient.patch('/notification/mark-all-as-read');
-      // Cập nhật tất cả thành đã đọc trên UI
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
       Alert.alert("Thành công", "Đã đánh dấu tất cả là đã đọc.");
     } catch (err) {
@@ -73,22 +66,26 @@ export default function NotificationScreen() {
     }
   };
 
-  // Helper: Format Time
   const formatTime = (iso) => {
-    const date = new Date(iso);
+    if (!iso) return '';
+    
+    // Thêm 'Z' vào cuối nếu chưa có để báo hiệu đây là giờ UTC
+    // Giúp điện thoại tự động cộng thêm 7 tiếng (Giờ VN)
+    const timeString = iso.endsWith('Z') ? iso : iso + 'Z';
+    
+    const date = new Date(timeString);
     const now = new Date();
-    const diff = (now - date) / 1000; 
+    const diff = (now.getTime() - date.getTime()) / 1000; // tính ra giây
 
     if (diff < 60) return 'Vừa xong';
     if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`;
     if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)} ngày trước`; // Thêm hiển thị ngày
     
     return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
   };
 
-  // Render Item
   const renderItem = ({ item }) => {
-    // Nếu backend chưa trả về sender, dùng icon mặc định
     const senderAvatar = item.sender?.medias?.slice().reverse().find(m => m.type === 'AVATAR')?.media?.url;
 
     return (
@@ -97,7 +94,6 @@ export default function NotificationScreen() {
         onPress={() => handleNotificationPress(item)}
         activeOpacity={0.8}
       >
-        {/* Avatar người gửi hoặc Icon hệ thống */}
         <View style={styles.avatarContainer}>
             {senderAvatar ? (
                 <Image source={{ uri: senderAvatar }} style={styles.avatar} />
@@ -106,13 +102,11 @@ export default function NotificationScreen() {
                     <Feather name="bell" size={20} color="#fff" />
                 </View>
             )}
-            {/* Loại thông báo icon nhỏ */}
             <View style={styles.typeIconBadge}>
                 <Feather name="message-circle" size={10} color="#fff" />
             </View>
         </View>
 
-        {/* Nội dung */}
         <View style={styles.contentContainer}>
             <Text style={[styles.message, !item.isRead && styles.unreadText]}>
                 {item.message}
@@ -120,7 +114,6 @@ export default function NotificationScreen() {
             <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
         </View>
 
-        {/* Chấm xanh nếu chưa đọc */}
         {!item.isRead && <View style={styles.blueDot} />}
       </TouchableOpacity>
     );
@@ -128,14 +121,12 @@ export default function NotificationScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Feather name="arrow-left" size={24} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Thông báo</Text>
         
-        {/* Nút Đọc tất cả */}
         <TouchableOpacity onPress={handleMarkAllRead} disabled={markingAll}>
             {markingAll ? (
                 <ActivityIndicator size="small" color="#007bff" />
@@ -145,7 +136,6 @@ export default function NotificationScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* List */}
       {loading ? (
         <View style={styles.center}>
             <ActivityIndicator size="large" color="#f97316" />
@@ -174,7 +164,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  // Header
   header: { 
     flexDirection: 'row', 
     alignItems: 'center', 
@@ -189,7 +178,6 @@ const styles = StyleSheet.create({
 
   listContent: { paddingBottom: 20 },
 
-  // Item Styles
   itemContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -199,15 +187,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff'
   },
   unreadContainer: {
-    backgroundColor: '#f0f9ff' // Xanh rất nhạt cho tin chưa đọc
+    backgroundColor: '#f0f9ff' 
   },
   
-  // Avatar / Icon
   avatarContainer: { position: 'relative', marginRight: 12 },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#eee' },
   iconPlaceholder: { 
     width: 48, height: 48, borderRadius: 24, 
-    backgroundColor: '#ff7e21', // Màu cam chủ đạo
+    backgroundColor: '#ff7e21', 
     justifyContent: 'center', alignItems: 'center' 
   },
   typeIconBadge: {
@@ -218,20 +205,17 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: '#fff'
   },
 
-  // Content
   contentContainer: { flex: 1 },
   message: { fontSize: 15, color: '#444', lineHeight: 20 },
-  unreadText: { fontWeight: '600', color: '#000' }, // Chữ đậm nếu chưa đọc
+  unreadText: { fontWeight: '600', color: '#000' }, 
   time: { fontSize: 12, color: '#888', marginTop: 4 },
 
-  // Blue Dot Indicator
   blueDot: {
     width: 10, height: 10, borderRadius: 5,
     backgroundColor: '#007bff',
     marginLeft: 8
   },
 
-  // Empty State
   emptyContainer: { alignItems: 'center', marginTop: 80 },
   emptyText: { marginTop: 16, fontSize: 16, color: '#888' },
 });
