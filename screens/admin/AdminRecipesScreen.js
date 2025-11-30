@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import apiClient from '../../apiClient';
 
 export default function AdminRecipesScreen({ navigation }) {
   const [recipes, setRecipes] = useState([]);
+  const [filteredRecipes, setFilteredRecipes] = useState([]);
+  const [searchText, setSearchText] = useState("");
   const [loading, setLoading] = useState(true);
 
   const fetchRecipes = async () => {
     setLoading(true);
     try {
       const res = await apiClient.get('/admin/recipe');
-      setRecipes(res.data.data || []);
+      const data = res.data.data || [];
+      setRecipes(data);
+      setFilteredRecipes(data); 
     } catch (err) { 
       console.error(err);
     } finally {
@@ -22,17 +26,29 @@ export default function AdminRecipesScreen({ navigation }) {
 
   useEffect(() => { fetchRecipes(); }, []);
 
-  // --- LOGIC KHÓA / MỞ KHÓA (CẬP NHẬT MỚI) ---
+
+  useEffect(() => {
+    const lower = searchText.toLowerCase();
+
+    const filtered = recipes.filter(item => {
+      const title = item.title?.toLowerCase() || "";
+      const username = item.user?.username?.toLowerCase() || "";
+      return title.includes(lower) || username.includes(lower);
+    });
+
+    setFilteredRecipes(filtered);
+  }, [searchText, recipes]);
+
+
+  // --- LOGIC KHÓA / MỞ KHÓA ---
   const handleToggleStatus = (recipe) => {
-    // 1. Xác định trạng thái hiện tại
-    // Nếu status là BLOCKED thì hành động tiếp theo là UNBLOCK và ngược lại
-    const currentStatus = recipe.isPublic === false ? 'BLOCKED' : 'ACTIVE'; // Dựa vào isPublic hoặc status từ API
+    const currentStatus = recipe.isPublic === false ? 'BLOCKED' : 'ACTIVE';
     const isBlocked = currentStatus === 'BLOCKED';
     
     const actionText = isBlocked ? 'MỞ KHÓA' : 'KHÓA';
     const confirmMessage = isBlocked 
         ? `Bạn có muốn kích hoạt lại công thức "${recipe.title}"?` 
-        : `Bạn có chắc chắn muốn CHẶN hiển thị công thức "${recipe.title}"?`;
+        : `Bạn có chắc chắn muốn khóa công thức "${recipe.title}"?`;
 
     Alert.alert(
       `Xác nhận ${actionText}`, 
@@ -44,20 +60,15 @@ export default function AdminRecipesScreen({ navigation }) {
           style: isBlocked ? 'default' : 'destructive', 
           onPress: async () => {
             try {
-              // 2. Gọi API dựa trên trạng thái (SỬ DỤNG API MỚI)
               if (isBlocked) {
-                  // Gọi API Mở khóa
                   await apiClient.patch(`/admin/recipe/${recipe.id}/unblock`);
               } else {
-                  // Gọi API Khóa
                   await apiClient.patch(`/admin/recipe/${recipe.id}/block`);
               }
               
-              // 3. Cập nhật UI ngay lập tức (Optimistic Update)
+              // Cập nhật UI
               setRecipes(prev => prev.map(item => {
                 if (item.id === recipe.id) {
-                    // Đảo ngược trạng thái isPublic/status
-                    // Nếu đang Blocked (isPublic=false) -> thành Active (isPublic=true)
                     return { 
                         ...item, 
                         status: isBlocked ? 'ACTIVE' : 'BLOCKED',
@@ -80,9 +91,6 @@ export default function AdminRecipesScreen({ navigation }) {
 
   const renderItem = ({ item }) => {
     const recipeImage = item.medias?.[0]?.media?.url;
-    
-    // Logic hiển thị: Ưu tiên dùng isPublic nếu có, hoặc fallback sang status
-
     const isBlocked = item.isPublic === false || item.status === 'BLOCKED';
     const displayStatus = isBlocked ? 'BLOCKED' : 'ACTIVE';
 
@@ -101,7 +109,6 @@ export default function AdminRecipesScreen({ navigation }) {
             <Text style={styles.author}> {item.user?.username || 'Ẩn danh'}</Text>
           </View>
 
-          {/* Badge hiển thị trạng thái */}
           <View style={[styles.badge, !isBlocked ? styles.activeBadge : styles.blockedBadge]}>
             <Text style={[styles.badgeText, !isBlocked ? styles.activeText : styles.blockedText]}>
               {displayStatus}
@@ -109,12 +116,10 @@ export default function AdminRecipesScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Nút Hành động */}
         <TouchableOpacity 
           onPress={() => handleToggleStatus(item)} 
           style={[styles.actionBtn, !isBlocked ? styles.blockBtn : styles.activeBtn]}
         >
-          {/* Nếu chưa khóa -> Hiện nút đỏ (Lock). Nếu đã khóa -> Hiện nút xanh (Unlock) */}
           <Feather 
             name={!isBlocked ? "lock" : "unlock"} 
             size={18} 
@@ -127,6 +132,8 @@ export default function AdminRecipesScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Feather name="arrow-left" size={24} color="#333" />
@@ -135,8 +142,20 @@ export default function AdminRecipesScreen({ navigation }) {
         <View style={{ width: 24 }} />
       </View>
 
+      {/* 🔍 SEARCH BAR */}
+      <View style={styles.searchContainer}>
+        <Feather name="search" size={18} color="#666" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Tìm công thức..."
+          value={searchText}
+          onChangeText={setSearchText}
+        />
+      </View>
+
+      {/* LIST */}
       <FlatList 
-        data={recipes} 
+        data={filteredRecipes}
         renderItem={renderItem} 
         keyExtractor={item => item.id.toString()}
         contentContainerStyle={styles.list}
@@ -163,7 +182,24 @@ const styles = StyleSheet.create({
     borderBottomColor: '#eee'
   },
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  
+
+  // 🔍 SEARCH
+  searchContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    margin: 12,
+    padding: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd'
+  },
+  searchInput: {
+    marginLeft: 8,
+    flex: 1,
+    fontSize: 15
+  },
+
   list: { padding: 16 },
   emptyText: { textAlign: 'center', marginTop: 30, color: '#888' },
 
@@ -174,45 +210,23 @@ const styles = StyleSheet.create({
     borderRadius: 12, 
     marginBottom: 12, 
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
     elevation: 2,
   },
-  image: { 
-    width: 70, 
-    height: 70, 
-    borderRadius: 8, 
-    marginRight: 12, 
-    backgroundColor: '#eee' 
-  },
-  info: { flex: 1, justifyContent: 'center' },
-  title: { 
-    fontWeight: '600', 
-    fontSize: 15, 
-    color: '#333', 
-    marginBottom: 4 
-  },
+  image: { width: 70, height: 70, borderRadius: 8, marginRight: 12, backgroundColor: '#eee' },
+  info: { flex: 1 },
+
+  title: { fontWeight: '600', fontSize: 15, color: '#333', marginBottom: 4 },
   authorRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   author: { color: '#666', fontSize: 12 },
   
   badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
   activeBadge: { backgroundColor: '#dcfce7' }, 
   blockedBadge: { backgroundColor: '#fee2e2' }, 
-  
   badgeText: { fontSize: 10, fontWeight: 'bold' },
   activeText: { color: '#166534' }, 
   blockedText: { color: '#991b1b' }, 
 
-  actionBtn: { 
-    width: 36, 
-    height: 36, 
-    borderRadius: 18, 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    marginLeft: 8 
-  },
-  blockBtn: { backgroundColor: '#ef4444' }, // Nút đỏ (để khóa)
-  activeBtn: { backgroundColor: '#10b981' }, // Nút xanh (để mở khóa)
+  actionBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  blockBtn: { backgroundColor: '#ef4444' },
+  activeBtn: { backgroundColor: '#10b981' },
 });
