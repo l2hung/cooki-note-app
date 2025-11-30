@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AuthForm from '../components/AuthForm';
@@ -26,10 +26,23 @@ export default function LoginScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // Hàm kiểm tra xem có đang bị khóa không
+  // Helper tạo key cho từng email 
+  const getKeys = (userEmail) => {
+      const safeEmail = userEmail.trim().toLowerCase();
+      return {
+          attemptKey: `login_failed_${safeEmail}`,
+          lockoutKey: `login_lockout_${safeEmail}`
+      };
+  };
+
+  // Hàm kiểm tra xem EMAIL NÀY có đang bị khóa không
   const checkLockout = async () => {
+    if (!email.trim()) return false;
+    
+    const { attemptKey, lockoutKey } = getKeys(email);
+
     try {
-      const lockoutTimestamp = await AsyncStorage.getItem('login_lockout_time');
+      const lockoutTimestamp = await AsyncStorage.getItem(lockoutKey);
       if (lockoutTimestamp) {
         const releaseTime = parseInt(lockoutTimestamp, 10);
         const now = Date.now();
@@ -38,12 +51,12 @@ export default function LoginScreen({ navigation }) {
           const remainingMinutes = Math.ceil((releaseTime - now) / 60000);
           Alert.alert(
             'Tài khoản tạm khóa', 
-            `Bạn đã nhập sai quá ${MAX_ATTEMPTS} lần. Vui lòng thử lại sau ${remainingMinutes} phút.`
+            `Email "${email}" đã nhập sai quá ${MAX_ATTEMPTS} lần. Vui lòng thử lại sau ${remainingMinutes} phút.`
           );
           return true; // Đang bị khóa
         } else {
-          // Đã hết thời gian khóa -> Reset
-          await AsyncStorage.multiRemove(['login_lockout_time', 'login_failed_attempts']);
+          // Đã hết thời gian khóa -> Reset cho email này
+          await AsyncStorage.multiRemove([lockoutKey, attemptKey]);
         }
       }
     } catch (error) {
@@ -53,13 +66,13 @@ export default function LoginScreen({ navigation }) {
   };
 
   const handleLogin = async () => {
-    // 1. Kiểm tra xem có bị khóa không trước khi gọi API
-    const isLocked = await checkLockout();
-    if (isLocked) return;
-
     if (!email.trim() || !password) {
       return Alert.alert('Lỗi', 'Vui lòng nhập đầy đủ email và mật khẩu');
     }
+
+    // 1. Kiểm tra khóa cho EMAIL CỤ THỂ
+    const isLocked = await checkLockout();
+    if (isLocked) return;
 
     setLoading(true);
     setMessage('');
@@ -73,8 +86,9 @@ export default function LoginScreen({ navigation }) {
 
       const decoded = jwt_decode(token); 
 
-      // 2. Đăng nhập thành công -> Xóa bộ đếm lỗi
-      await AsyncStorage.multiRemove(['login_lockout_time', 'login_failed_attempts']);
+      // 2. Đăng nhập thành công -> Xóa bộ đếm lỗi CỦA EMAIL NÀY
+      const { attemptKey, lockoutKey } = getKeys(email);
+      await AsyncStorage.multiRemove([lockoutKey, attemptKey]);
 
       await AsyncStorage.multiSet([
         ['jwt_token', token],
@@ -96,7 +110,6 @@ export default function LoginScreen({ navigation }) {
       if (err.response && err.response.status === 401) {
           await handleFailedAttempt();
       } else {
-          // Các lỗi khác (mạng, server 500...) thì chỉ hiện thông báo
           Alert.alert('Lỗi', msg);
       }
 
@@ -105,29 +118,31 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-  // Hàm xử lý tăng số lần sai
+  // Hàm xử lý tăng số lần sai CHO EMAIL HIỆN TẠI
   const handleFailedAttempt = async () => {
+    const { attemptKey, lockoutKey } = getKeys(email);
+
     try {
-        const attemptsStr = await AsyncStorage.getItem('login_failed_attempts');
+        const attemptsStr = await AsyncStorage.getItem(attemptKey);
         let attempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
         attempts += 1;
 
         if (attempts >= MAX_ATTEMPTS) {
-            // Nếu sai quá 3 lần -> Đặt thời gian mở khóa = hiện tại + 10 phút
+            // Khóa email này
             const releaseTime = Date.now() + LOCKOUT_TIME;
-            await AsyncStorage.setItem('login_lockout_time', releaseTime.toString());
+            await AsyncStorage.setItem(lockoutKey, releaseTime.toString());
             
             Alert.alert(
                 'Tạm khóa đăng nhập', 
-                `Bạn đã nhập sai 3 lần. Tài khoản sẽ bị tạm khóa trong 10 phút.`
+                `Tài khoản ${email} đã bị tạm khóa 10 phút do nhập sai quá nhiều lần.`
             );
         } else {
-            // Nếu chưa đủ 3 lần -> Lưu số lần sai và cảnh báo
-            await AsyncStorage.setItem('login_failed_attempts', attempts.toString());
+            // Lưu số lần sai
+            await AsyncStorage.setItem(attemptKey, attempts.toString());
             const remaining = MAX_ATTEMPTS - attempts;
             Alert.alert(
                 'Sai thông tin', 
-                `Email hoặc mật khẩu không đúng. Bạn còn ${remaining} lần thử trước khi bị khóa.`
+                `Email hoặc mật khẩu không đúng. Bạn còn ${remaining} lần thử.`
             );
         }
     } catch (error) {
