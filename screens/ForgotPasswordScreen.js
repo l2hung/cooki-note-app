@@ -1,6 +1,6 @@
-
 import React, { useState } from 'react';
 import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // 1. Import AsyncStorage
 import AuthForm from '../components/AuthForm';
 import apiClient from '../apiClient';
 
@@ -14,9 +14,49 @@ export default function ForgotPasswordScreen({ navigation }) {
   const [message, setMessage] = useState('');
 
   const sendOtp = async () => {
+    if (!email.trim()) {
+        setMessage('Vui lòng nhập email');
+        return;
+    }
+
+    // --- 2. LOGIC KIỂM TRA GIỚI HẠN 5 LẦN/NGÀY ---
+    const MAX_ATTEMPTS = 5;
+    const today = new Date().toDateString(); // Lấy ngày hiện tại (VD: "Mon Nov 30 2025")
+    const storageKey = `otp_limit_${email.trim().toLowerCase()}`; // Key riêng cho từng email
+
+    let usageData = { date: today, count: 0 };
+
+    try {
+        const savedData = await AsyncStorage.getItem(storageKey);
+        if (savedData) {
+            const parsedData = JSON.parse(savedData);
+            // Nếu dữ liệu là của ngày hôm nay thì dùng tiếp, khác ngày thì reset về 0
+            if (parsedData.date === today) {
+                usageData = parsedData;
+            }
+        }
+
+        if (usageData.count >= MAX_ATTEMPTS) {
+            Alert.alert(
+                'Giới hạn gửi OTP', 
+                'Bạn đã yêu cầu OTP quá 5 lần trong ngày hôm nay. Vui lòng thử lại vào ngày mai.'
+            );
+            return; // Chặn không cho gọi API
+        }
+    } catch (error) {
+        console.error('Lỗi kiểm tra giới hạn OTP:', error);
+    }
+    // -------------------------------------------------
+
     setLoading(true);
     try {
       const res = await apiClient.get('/email/request-otp', { params: { email } });
+      
+      // --- 3. TĂNG BIẾN ĐẾM KHI GỬI THÀNH CÔNG ---
+      usageData.count += 1;
+      await AsyncStorage.setItem(storageKey, JSON.stringify(usageData));
+      // -------------------------------------------
+
       setMessage('Đã gửi mã OTP, kiểm tra email!');
       setStage('otp');
     } catch (err) {
