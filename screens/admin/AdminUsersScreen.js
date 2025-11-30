@@ -8,10 +8,10 @@ export default function AdminUsersScreen({ navigation }) {
   const [users, setUsers] = useState([]);
   const [keyword, setKeyword] = useState('');
 
-  // --- Lấy danh sách người dùng ---
+  //Lấy danh sách người dùng 
   const fetchUsers = async (search = '') => {
     try {
-      const endpoint = search ? `/admin/user/search?keyword=${search}` : '/admin/user?size=100';
+      const endpoint = search ? `/admin/user/search?keyword=${search}` : '/admin/user?size=50';
       const res = await apiClient.get(endpoint);
       setUsers(res.data.data || []);
     } catch (err) {
@@ -21,7 +21,7 @@ export default function AdminUsersScreen({ navigation }) {
 
   useEffect(() => { fetchUsers(); }, []);
 
-  // --- Toggle trạng thái người dùng ---
+  // Toggle trạng thái người dùng 
   const toggleStatus = async (user) => {
     const action = user.status === 'ACTIVE' ? 'ban' : 'activate';
     const actionText = user.status === 'ACTIVE' ? 'Khóa' : 'Mở khóa';
@@ -43,12 +43,12 @@ export default function AdminUsersScreen({ navigation }) {
     ]);
   };
 
-  // --- Navigate sang Profile (nested navigator) ---
+  //Navigate sang Profile
   const goToProfile = (user) => {
     navigation.navigate('Main', {
-      screen: 'HomeTab',       // Tab bạn muốn đi vào
+      screen: 'HomeTab',      
       params: {
-        screen: 'Profile',     // Screen trong HomeStack
+        screen: 'Profile',     
         params: { userId: user.id },
       },
     });
@@ -89,7 +89,7 @@ export default function AdminUsersScreen({ navigation }) {
     );
   };
 
-  // --- Search realtime ---
+  //Search
   const handleSearch = (text) => {
     setKeyword(text);
     fetchUsers(text);
