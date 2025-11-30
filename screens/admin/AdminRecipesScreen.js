@@ -23,7 +23,6 @@ export default function AdminRecipesScreen({ navigation }) {
     setLoading(true);
     try {
       const res = await apiClient.get('/admin/recipe?page=0&size=9999');
-
       const data = res.data.data || [];
       setRecipes(data);
       setFilteredRecipes(data); 
@@ -36,10 +35,9 @@ export default function AdminRecipesScreen({ navigation }) {
 
   useEffect(() => { fetchRecipes(); }, []);
 
-  // --- LOGIC TÌM KIẾM ---
   const handleSearch = (text) => {
     setSearchText(text);
-    if (text.trim() === '') {
+    if (!text.trim()) {
       setFilteredRecipes(recipes);
     } else {
       const lowerText = text.toLowerCase();
@@ -51,9 +49,7 @@ export default function AdminRecipesScreen({ navigation }) {
     }
   };
 
-  // --- LOGIC KHÓA / MỞ KHÓA ---
   const handleToggleStatus = (recipe) => {
-    // (Giữ nguyên logic khóa/mở khóa như cũ)
     const currentStatus = recipe.isPublic === false ? 'BLOCKED' : 'ACTIVE'; 
     const isBlocked = currentStatus === 'BLOCKED';
     const actionText = isBlocked ? 'MỞ KHÓA' : 'KHÓA';
@@ -107,11 +103,16 @@ export default function AdminRecipesScreen({ navigation }) {
     const displayStatus = isBlocked ? 'BLOCKED' : 'ACTIVE';
 
     return (
-      // 🔹 THAY ĐỔI Ở ĐÂY: Chuyển View thành TouchableOpacity để bấm vào được
       <TouchableOpacity 
         style={styles.card}
         activeOpacity={0.9}
-        onPress={() => navigation.navigate('RecipeDetail', { id: item.id })}
+        onPress={() => navigation.navigate('Main', {
+          screen: 'HomeTab',
+          params: {
+            screen: 'RecipeDetail',
+            params: { id: item.id },
+          },
+        })}
       >
         <Image 
           source={{ uri: recipeImage || 'https://via.placeholder.com/80' }} 
@@ -133,7 +134,6 @@ export default function AdminRecipesScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Nút khóa vẫn hoạt động riêng biệt */}
         <TouchableOpacity 
           onPress={() => handleToggleStatus(item)} 
           style={[styles.actionBtn, !isBlocked ? styles.blockBtn : styles.activeBtn]}
