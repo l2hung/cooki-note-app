@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   ScrollView,
   View,
@@ -13,8 +13,8 @@ import {
   Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRoute, useNavigation } from '@react-navigation/native';
-import Feather from 'react-native-vector-icons/Feather'; // Import Icon
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
+import Feather from 'react-native-vector-icons/Feather';
 import apiClient from '../apiClient';
 
 export default function RecipeDetailScreen() {
@@ -32,57 +32,55 @@ export default function RecipeDetailScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [isAddingToList, setIsAddingToList] = useState(false);
 
-  // --- 1. FETCH DATA (ĐÃ TÍCH HỢP LOGIC XỬ LÝ LỖI 404) ---
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [recipeRes, userRes] = await Promise.all([
-          apiClient.get(`/recipes/${id}`),
-          apiClient.get('/users/me').catch(() => ({ data: { data: null } }))
-        ]);
+  // --- FETCH DATA ---
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      const fetchData = async () => {
+        try {
+          const [recipeRes, userRes] = await Promise.all([
+            apiClient.get(`/recipes/${id}`),
+            apiClient.get('/users/me').catch(() => ({ data: { data: null } }))
+          ]);
 
-        const data = recipeRes.data.data;
-        setRecipe(data);
-        setLikeCount(data.likes?.length || 0);
-        
-        if (userRes.data?.data) {
-          const user = userRes.data.data;
-          setCurrentUser(user);
-          setIsLiked(data.likes?.some(l => l.user?.id === user.id));
-        }
-      } catch (err) {
-          if (!(err.response && err.response.status === 404)) {
-              console.error("Chi tiết lỗi:", err);
+          if (isActive) {
+            const data = recipeRes.data.data;
+            setRecipe(data);
+            setLikeCount(data.likes?.length || 0);
+            
+            if (userRes.data?.data) {
+              const user = userRes.data.data;
+              setCurrentUser(user);
+              setIsLiked(data.likes?.some(l => l.user?.id === user.id));
+            }
+            setLoading(false);
           }
-        
-        // 🔹 XỬ LÝ LỖI 404 (Công thức bị xóa)
-        if (err.response && err.response.status === 404) {
-            Alert.alert(
-                'Không tìm thấy',
-                'Công thức này đã bị xóa hoặc không tồn tại.',
-                [
-                    { text: 'Quay lại', onPress: () => navigation.goBack() }
-                ]
-            );
-        } else {
-            // Các lỗi khác (mạng, server 500...)
-            Alert.alert('Lỗi', 'Không thể tải chi tiết công thức. Vui lòng thử lại sau.');
-            navigation.goBack();
+        } catch (err) {
+          if (!isActive) return;
+          if (err.response && err.response.status === 404) {
+              Alert.alert(
+                  'Không tìm thấy',
+                  'Công thức này đã bị xóa hoặc không tồn tại.',
+                  [{ text: 'Quay lại', onPress: () => navigation.goBack() }]
+              );
+          } else {
+              if(!recipe) {
+                  Alert.alert('Lỗi', 'Không thể tải chi tiết công thức.');
+                  navigation.goBack();
+              }
+          }
+          setLoading(false);
         }
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [id]);
+      };
+      fetchData();
+      return () => { isActive = false; };
+    }, [id])
+  );
 
   // --- HANDLERS ---
-
   const handleLike = async () => {
     const originalLiked = isLiked;
     const originalCount = likeCount;
-    
     setIsLiked(!originalLiked);
     setLikeCount(originalLiked ? originalCount - 1 : originalCount + 1);
 
@@ -127,10 +125,7 @@ export default function RecipeDetailScreen() {
     }
   };
 
-  const handleEdit = () => {
-    // Điều hướng sang màn hình AddRecipe để sửa
-    navigation.navigate('AddRecipe', { recipeId: recipe.id });
-  };
+  const handleEdit = () => navigation.navigate('AddRecipe', { recipeId: recipe.id });
 
   const handleDelete = () => {
     Alert.alert(
@@ -155,21 +150,12 @@ export default function RecipeDetailScreen() {
     );
   };
 
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#007bff" />
-      </View>
-    );
-  }
-
-  // Nếu không có recipe (do 404 hoặc lỗi khác), return null để tránh crash
+  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#007bff" /></View>;
   if (!recipe) return null;
 
   const sortedSteps = [...(recipe.steps || [])].sort((a, b) => a.stepOrder - b.stepOrder);
   const isOwner = currentUser?.id === recipe.user?.id;
   
-  // Helper lấy avatar
   const getAvatar = (user) => user?.medias?.slice().reverse().find(m => m.type === 'AVATAR')?.media?.url;
   const authorAvatar = getAvatar(recipe.user);
   const myAvatar = getAvatar(currentUser);
@@ -183,15 +169,12 @@ export default function RecipeDetailScreen() {
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                 <Feather name="arrow-left" size={26} color="#333" />
             </TouchableOpacity>
-            
-            {/* Nhóm nút Sửa/Xóa (Chỉ hiện nếu là chủ sở hữu) */}
             {isOwner && (
                 <View style={styles.headerActions}>
-                     {/* <TouchableOpacity onPress={handleEdit} style={styles.editBtn}>
+                    <TouchableOpacity onPress={handleEdit} style={styles.editBtn}>
                         <Feather name="edit-2" size={18} color="#007bff" />
                         <Text style={styles.editText}>Sửa</Text>
-                    </TouchableOpacity> */}
-
+                    </TouchableOpacity>
                     <TouchableOpacity onPress={handleDelete} style={styles.deleteBtn}>
                         <Feather name="trash-2" size={18} color="#ef4444" />
                         <Text style={styles.deleteText}>Xóa</Text>
@@ -237,7 +220,7 @@ export default function RecipeDetailScreen() {
                 </View>
             </TouchableOpacity>
 
-            {/* META (Thời gian, Độ khó, Khẩu phần) */}
+            {/* META */}
             <View style={styles.metaContainer}>
                 <View style={styles.metaItem}>
                     <Feather name="clock" size={16} color="#555" />
@@ -245,13 +228,27 @@ export default function RecipeDetailScreen() {
                 </View>
                 <View style={styles.metaItem}>
                     <Feather name="bar-chart" size={16} color="#555" />
-                    <Text style={styles.metaText}>{recipe.difficulty}</Text>
+                    <Text style={styles.metaText}>
+                        {recipe.difficulty === 'EASY' ? 'Dễ' : recipe.difficulty === 'MEDIUM' ? 'Trung bình' : 'Khó'}
+                    </Text>
                 </View>
                 <View style={styles.metaItem}>
                     <Feather name="users" size={16} color="#555" />
                     <Text style={styles.metaText}>{recipe.servings} người</Text>
                 </View>
             </View>
+
+          {/*MÔ TẢ MÓN ĂN  */}
+            {recipe.description ? (
+                <View style={styles.descContainer}>
+                    <Feather name="message-circle" size={24} color="#007bff" style={styles.descIcon} />
+                    <View style={styles.descContent}>
+                        <Text style={styles.descLabel}>Mô tả</Text>
+                        <Text style={styles.descText}>{recipe.description}</Text>
+                    </View>
+                </View>
+            ) : null}
+        
 
             {/* NGUYÊN LIỆU */}
             <View style={styles.section}>
@@ -305,9 +302,7 @@ export default function RecipeDetailScreen() {
                             {cAvt ? (
                                 <Image source={{ uri: cAvt }} style={styles.commentAvatar} />
                             ) : (
-                                <View style={styles.commentAvatarPlace}>
-                                    <Text>{c.user?.username?.[0]}</Text>
-                                </View>
+                                <View style={styles.commentAvatarPlace}><Text>{c.user?.username?.[0]}</Text></View>
                             )}
                             <View style={styles.commentBubble}>
                                 <Text style={styles.commentUser}>{c.user?.username}</Text>
@@ -317,10 +312,9 @@ export default function RecipeDetailScreen() {
                     );
                 })}
             </View>
-
         </ScrollView>
 
-        {/* COMMENT INPUT */}
+        {/* INPUT COMMENT */}
         <View style={styles.commentInputContainer}>
             {myAvatar ? (
                 <Image source={{ uri: myAvatar }} style={styles.myAvatar} />
@@ -350,16 +344,12 @@ const styles = StyleSheet.create({
 
   // HEADER
   header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    padding: 16,
-    backgroundColor: '#f4f5f7' 
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', 
+    padding: 16, backgroundColor: '#f4f5f7' 
   },
   backBtn: { padding: 4 },
   headerActions: { flexDirection: 'row', gap: 10 },
 
-  // Button Styles
   deleteBtn: { 
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff1f2', 
     paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: '#fecaca', gap: 4 
@@ -392,6 +382,48 @@ const styles = StyleSheet.create({
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   metaText: { color: '#555', fontWeight: '500', fontSize: 13 },
 
+
+  // STYLE MỚI CHO PHẦN MÔ TẢ
+  descContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 24,
+    padding: 16,
+    borderRadius: 16,
+    // Tạo hiệu ứng đổ bóng nhẹ
+    elevation: 2, // Android
+    shadowColor: '#000', // iOS
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    // Đường viền trang trí bên trái
+    borderLeftWidth: 4,
+    borderLeftColor: '#007bff',
+  },
+  descIcon: {
+    marginTop: 2,
+    marginRight: 12,
+  },
+  descContent: {
+    flex: 1, 
+  },
+  descLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#007bff',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+    letterSpacing: 0.5,
+  },
+  descText: {
+    fontSize: 15,
+    color: '#444',
+    lineHeight: 24, 
+    textAlign: 'justify', 
+    fontStyle: 'italic', 
+  },
+
   // SECTIONS
   section: { marginBottom: 24, paddingHorizontal: 16 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, borderBottomWidth: 1, borderBottomColor: '#eaeaea', paddingBottom: 8 },
@@ -405,13 +437,15 @@ const styles = StyleSheet.create({
   ingQty: { fontSize: 15, color: '#555', fontWeight: '500' },
 
   // STEPS
-  stepCard: { backgroundColor: '#fff', borderRadius: 20, marginBottom: 16, padding: 16, paddingLeft: 50, position: 'relative', elevation: 2 },
+  stepCard: { backgroundColor: '#fff', borderRadius: 20, marginBottom: 16, padding: 16, paddingLeft: 50, position: 'relative', elevation: 2,shadowColor: '#000', shadowOffset: { width: 0, height: 2 },shadowOpacity: 0.05,shadowRadius: 4,borderLeftWidth: 4,borderLeftColor: '#007bff', },
   stepBadge: { position: 'absolute', top: 16, left: 16, width: 30, height: 30, backgroundColor: '#3b82f6', borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
   stepNum: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   stepDesc: { fontSize: 15, color: '#333', lineHeight: 22, marginBottom: 12 },
   stepImage: { width: '100%', height: 200, borderRadius: 12, marginTop: 8 },
+  stepContent: { flex: 1 },
+  
 
-  // COMMENTS
+  // COMMENTS & INPUT
   commentItem: { flexDirection: 'row', marginBottom: 12, gap: 10 },
   commentAvatar: { width: 36, height: 36, borderRadius: 18 },
   commentAvatarPlace: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' },
@@ -419,7 +453,6 @@ const styles = StyleSheet.create({
   commentUser: { fontWeight: 'bold', fontSize: 13, marginBottom: 2, color: '#333' },
   commentText: { fontSize: 14, color: '#444' },
 
-  // INPUT
   commentInputContainer: { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee', gap: 10 },
   myAvatar: { width: 32, height: 32, borderRadius: 16 },
   myAvatarPlace: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' },
