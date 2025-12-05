@@ -15,21 +15,26 @@ import {
   FlatList
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons'; 
 import * as ImagePicker from 'expo-image-picker';
 import apiClient from '../apiClient';
 
 export default function AddRecipeScreen() {
   const navigation = useNavigation();
+  const route = useRoute();
+  const { recipeId } = route.params || {}; 
+  const isEditing = !!recipeId;
 
   // --- STATE ---
   const [title, setTitle] = useState('');
   const [titleError, setTitleError] = useState('');
   const [description, setDescription] = useState('');
-  const [cookTime, setCookTime] = useState('30');
-  const [servings, setServings] = useState('2');
-  const [difficulty, setDifficulty] = useState('EASY');
+  
+  // STATE CHO: THỜI GIAN, KHẨU PHẦN, ĐỘ KHÓ
+  const [cookTime, setCookTime] = useState('30'); // Mặc định 30 phút
+  const [servings, setServings] = useState('2');  // Mặc định 2 người
+  const [difficulty, setDifficulty] = useState('EASY'); // Mặc định Dễ
 
   const [allCategories, setAllCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
@@ -41,15 +46,77 @@ export default function AddRecipeScreen() {
 
   const [steps, setSteps] = useState([{ description: '', images: [] }]);
   const [mainImage, setMainImage] = useState(null);
+  
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(false);
   const [uploadingMsg, setUploadingMsg] = useState('');
 
-  // --- LOAD CATEGORIES ---
+  // --- 1. LOAD DATA ---
   useEffect(() => {
+    // Load danh mục
     apiClient.get('/category')
       .then(res => setAllCategories(res.data.data || []))
       .catch(err => console.error("Lỗi tải danh mục:", err));
-  }, []);
+
+    // Nếu đang sửa, load dữ liệu công thức
+    if (isEditing) {
+      fetchRecipeData();
+    }
+  }, [recipeId]);
+
+  const fetchRecipeData = async () => {
+    setInitialLoading(true);
+    try {
+      const res = await apiClient.get(`/recipes/${recipeId}`);
+      const data = res.data.data;
+
+      // Điền dữ liệu cơ bản
+      setTitle(data.title);
+      setDescription(data.description || '');
+      
+      // Điền dữ liệu MỚI (Time, Servings, Difficulty)
+      if (data.cookTimeMinutes) setCookTime(String(data.cookTimeMinutes));
+      if (data.servings) setServings(String(data.servings));
+      if (data.difficulty) setDifficulty(data.difficulty);
+      
+      if (data.category) setSelectedCategory(data.category);
+
+      // Điền nguyên liệu
+      if (data.ingredients && data.ingredients.length > 0) {
+        const mappedIngs = data.ingredients.map(i => ({
+          name: i.ingredient.name,
+          quantity: String(i.quantity),
+          unit: i.unit,
+          note: i.note || '',
+          required: i.required,
+          error: ''
+        }));
+        setIngredients(mappedIngs);
+      }
+
+      // Điền ảnh đại diện
+      const avatarMedia = data.medias?.find(m => m.type === 'AVATAR');
+      if (avatarMedia) {
+        setMainImage({ uri: avatarMedia.media.url, id: avatarMedia.media.id });
+      }
+
+      // Điền các bước
+      if (data.steps && data.steps.length > 0) {
+        const sortedSteps = data.steps.sort((a, b) => a.stepOrder - b.stepOrder);
+        const mappedSteps = sortedSteps.map(s => ({
+          description: s.description,
+          images: s.medias ? s.medias.map(m => ({ uri: m.media.url, id: m.media.id })) : []
+        }));
+        setSteps(mappedSteps);
+      }
+
+    } catch (error) {
+      Alert.alert("Lỗi", "Không thể tải dữ liệu công thức.");
+      navigation.goBack();
+    } finally {
+      setInitialLoading(false);
+    }
+  };
 
   // --- IMAGE PICKER ---
   const pickMainImage = async () => {
@@ -86,9 +153,11 @@ export default function AddRecipeScreen() {
   };
 
   // --- UPLOAD ---
-  const uploadFile = async (imageAsset, endpoint) => {
+  const handleImageUpload = async (imageObj, endpoint) => {
+    if (imageObj.id) return imageObj.id; // Ảnh cũ đã có ID
+
     const formData = new FormData();
-    const uri = Platform.OS === "android" ? imageAsset.uri : imageAsset.uri.replace("file://", "");
+    const uri = Platform.OS === "android" ? imageObj.uri : imageObj.uri.replace("file://", "");
     const filename = uri.split('/').pop();
     const match = /\.(\w+)$/.exec(filename);
     const type = match ? `image/${match[1]}` : `image/jpeg`;
@@ -99,37 +168,25 @@ export default function AddRecipeScreen() {
       const res = await apiClient.post(endpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      return res.data.data;
+      return res.data.data.id;
     } catch (error) {
       console.error(`Upload failed to ${endpoint}:`, error);
       throw error;
     }
   };
 
-  // --- VALIDATE REAL-TIME ---
+  // --- HANDLERS ---
   const handleTitleChange = (text) => {
     setTitle(text);
-    if (!text.trim()) {
-      setTitleError('Tên món không được để trống');
-    } else if (!/^[A-Za-zÀ-ỹ\s]+$/.test(text.trim())) {
-      setTitleError('Tên món chỉ chứa chữ và khoảng trắng');
-    } else {
-      setTitleError('');
-    }
+    if (!text.trim()) setTitleError('Tên món không được để trống');
+    else setTitleError('');
   };
 
   const handleIngredientChange = (index, field, value) => {
     const newIngs = [...ingredients];
     newIngs[index][field] = value;
-
     if (field === 'name') {
-      if (!value.trim()) {
-        newIngs[index].error = 'Tên nguyên liệu không được để trống';
-      } else if (!/^[A-Za-zÀ-ỹ\s]+$/.test(value.trim())) {
-        newIngs[index].error = 'Tên nguyên liệu chỉ chứa chữ và khoảng trắng';
-      } else {
-        newIngs[index].error = '';
-      }
+      newIngs[index].error = !value.trim() ? 'Tên nguyên liệu trống' : '';
     }
     setIngredients(newIngs);
   };
@@ -152,39 +209,42 @@ export default function AddRecipeScreen() {
 
   // --- SUBMIT ---
   const submitRecipe = async () => {
-    // Kiểm tra lỗi realtime
-    if (titleError) return Alert.alert('Lỗi', 'Vui lòng sửa tên món trước khi đăng');
+    if (!title.trim()) return Alert.alert('Lỗi', 'Vui lòng nhập tên món');
     if (!selectedCategory) return Alert.alert('Lỗi', 'Vui lòng chọn danh mục');
-    const ingErrors = ingredients.find(i => i.error);
-    if (ingErrors) return Alert.alert('Lỗi', 'Vui lòng sửa tên nguyên liệu hợp lệ');
+    
+    // Validate Time & Servings
+    const timeVal = parseInt(cookTime);
+    const servVal = parseInt(servings);
+    if (isNaN(timeVal) || timeVal <= 0) return Alert.alert('Lỗi', 'Thời gian nấu không hợp lệ');
+    if (isNaN(servVal) || servVal <= 0) return Alert.alert('Lỗi', 'Khẩu phần ăn không hợp lệ');
+
+    const validIngredients = ingredients.filter(ing => ing.name.trim() !== '');
+    if (validIngredients.length === 0) return Alert.alert('Lỗi', 'Cần ít nhất 1 nguyên liệu');
 
     setLoading(true);
     try {
-      let mainImageMedia = null;
+      let mainMediaId = null;
       if (mainImage) {
-        setUploadingMsg('Đang tải ảnh bìa...');
-        mainImageMedia = await uploadFile(mainImage, '/media/recipe-avatar');
+        setUploadingMsg('Đang xử lý ảnh bìa...');
+        mainMediaId = await handleImageUpload(mainImage, '/media/recipe-avatar');
       }
 
-      setUploadingMsg('Đang tải ảnh các bước...');
+      setUploadingMsg('Đang xử lý ảnh các bước...');
       const stepsWithMedia = await Promise.all(steps.map(async (step, index) => {
-        let uploadedMedias = [];
+        let uploadedMediaIds = [];
         if (step.images.length > 0) {
-          const results = await Promise.all(step.images.map(img => uploadFile(img, '/media/step-image')));
-          uploadedMedias = results.map(data => ({ media: { id: data.id } }));
+          uploadedMediaIds = await Promise.all(step.images.map(img => handleImageUpload(img, '/media/step-image')));
         }
         return {
           stepOrder: index + 1,
           description: step.description,
-          estimatedTimeMinutes: 10,
-          medias: uploadedMedias
+          medias: uploadedMediaIds.map(id => ({ media: { id } }))
         };
       }));
 
-      setUploadingMsg('Đang tạo công thức...');
-      const ingredientsPayload = ingredients
-        .filter(ing => ing.name.trim() !== '')
-        .map(ing => ({
+      setUploadingMsg(isEditing ? 'Đang cập nhật...' : 'Đang tạo công thức...');
+      
+      const ingredientsPayload = validIngredients.map(ing => ({
           ingredient: { name: ing.name },
           quantity: parseFloat(ing.quantity) || 0,
           unit: ing.unit,
@@ -192,35 +252,50 @@ export default function AddRecipeScreen() {
           note: ing.note || ''
         }));
 
-      const mediasPayload = mainImageMedia ? [{ media: { id: mainImageMedia.id }, type: 'AVATAR' }] : [];
+      const mediasPayload = mainMediaId ? [{ media: { id: mainMediaId }, type: 'AVATAR' }] : [];
 
+      // PAYLOAD ĐÃ BAO GỒM CÁC TRƯỜNG MỚI
       const finalPayload = {
         title,
         description,
-        cookTimeMinutes: parseInt(cookTime) || 30,
-        servings: parseInt(servings) || 2,
-        difficulty,
+        cookTimeMinutes: timeVal, // Gửi số int
+        servings: servVal,        // Gửi số int
+        difficulty,               // Gửi enum string (EASY/MEDIUM/HARD)
         category: { id: selectedCategory.id },
         ingredients: ingredientsPayload,
         steps: stepsWithMedia,
         medias: mediasPayload
       };
 
-      await apiClient.post('/recipes', finalPayload);
-
-      Alert.alert('Thành công 🎉', 'Công thức đã được đăng!', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      if (isEditing) {
+        await apiClient.patch(`/recipes/${recipeId}`, finalPayload);
+        Alert.alert('Thành công', 'Cập nhật công thức thành công!', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
+      } else {
+        await apiClient.post('/recipes', finalPayload);
+        Alert.alert('Thành công 🎉', 'Công thức đã được đăng!', [
+          { text: 'OK', onPress: () => navigation.goBack() },
+        ]);
+      }
 
     } catch (err) {
-      console.error('Full Submit Error:', err);
-      const msg = err.response?.data?.message || 'Đăng công thức thất bại. Vui lòng thử lại.';
-      Alert.alert('Lỗi', msg);
+      console.error('Submit Error:', err);
+      Alert.alert('Lỗi', err.response?.data?.message || 'Có lỗi xảy ra');
     } finally {
       setLoading(false);
       setUploadingMsg('');
     }
   };
+
+  if (initialLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#007bff" />
+        <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -229,12 +304,13 @@ export default function AddRecipeScreen() {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
             <Feather name="x" size={24} color="#555" />
           </TouchableOpacity>
+          <Text style={styles.headerTitle}>{isEditing ? 'Sửa công thức' : 'Tạo công thức mới'}</Text>
           <TouchableOpacity 
             onPress={submitRecipe} 
             disabled={loading} 
             style={[styles.publishBtn, loading && styles.disabledBtn]}
           >
-            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.publishText}>Đăng</Text>}
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.publishText}>{isEditing ? 'Lưu' : 'Đăng'}</Text>}
           </TouchableOpacity>
         </View>
 
@@ -246,7 +322,8 @@ export default function AddRecipeScreen() {
         ) : null}
 
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* Ảnh bìa */}
+          
+          {/* ẢNH BÌA */}
           <View style={styles.imageUploadSection}>
             <TouchableOpacity onPress={pickMainImage}>
               {mainImage ? (
@@ -257,29 +334,74 @@ export default function AddRecipeScreen() {
                 </View>
               )}
             </TouchableOpacity>
-            <Text style={styles.uploadTextBtn}>Đăng hình đại diện món ăn</Text>
+            <Text style={styles.uploadTextBtn}>Ảnh đại diện món ăn</Text>
           </View>
 
-          {/* Tên món */}
+          {/* THÔNG TIN CHUNG */}
           <View style={styles.section}>
+            <Text style={styles.label}>Tên món ăn <Text style={{color:'red'}}>*</Text></Text>
             <TextInput 
-              placeholder="Tên món..." 
+              placeholder="Ví dụ: Phở bò..." 
               value={title} 
               onChangeText={handleTitleChange} 
-              style={[styles.input, titleError && { borderColor: 'red', borderWidth: 1 }]} 
+              style={[styles.input, titleError && { borderColor: 'red' }]} 
             />
-            {titleError ? <Text style={{ color: 'red', marginBottom: 8 }}>{titleError}</Text> : null}
+            {titleError ? <Text style={styles.errorText}>{titleError}</Text> : null}
+            
+            <Text style={styles.label}>Mô tả</Text>
             <TextInput 
-              placeholder="Mô tả..." 
+              placeholder="Giới thiệu sơ qua..." 
               value={description} 
               onChangeText={setDescription} 
               multiline 
               style={[styles.input, styles.textArea]} 
             />
+            
+            {/* --- KHU VỰC NHẬP LIỆU MỚI --- */}
+            <View style={styles.row}>
+                <View style={styles.col}>
+                    <Text style={styles.label}>Thời gian (phút)</Text>
+                    <TextInput 
+                        keyboardType="numeric" 
+                        value={cookTime} 
+                        onChangeText={setCookTime} 
+                        style={styles.input} 
+                        placeholder="30"
+                    />
+                </View>
+                <View style={[styles.col, { marginLeft: 12 }]}>
+                    <Text style={styles.label}>Khẩu phần (người)</Text>
+                    <TextInput 
+                        keyboardType="numeric" 
+                        value={servings} 
+                        onChangeText={setServings} 
+                        style={styles.input} 
+                        placeholder="2"
+                    />
+                </View>
+            </View>
+
+             <Text style={styles.label}>Độ khó</Text>
+             <View style={styles.difficultyRow}>
+                {['EASY', 'MEDIUM', 'HARD'].map(d => (
+                    <TouchableOpacity 
+                        key={d} 
+                        style={[styles.diffBtn, difficulty === d && styles.diffBtnActive]}
+                        onPress={() => setDifficulty(d)}
+                    >
+                        <Text style={[styles.diffText, difficulty === d && styles.diffTextActive]}>
+                            {d === 'EASY' ? 'Dễ' : d === 'MEDIUM' ? 'Trung bình' : 'Khó'}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+             </View>
+             {/* ----------------------------- */}
+
           </View>
 
-          {/* Danh mục */}
+          {/* DANH MỤC */}
           <View style={styles.section}>
+            <Text style={styles.label}>Danh mục <Text style={{color:'red'}}>*</Text></Text>
             <TouchableOpacity style={styles.selectInput} onPress={() => setModalVisible(true)}>
               <Text style={{ color: selectedCategory ? '#333' : '#999' }}>
                 {selectedCategory ? selectedCategory.name : 'Chọn danh mục...'}
@@ -288,19 +410,18 @@ export default function AddRecipeScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Nguyên liệu */}
+          {/* NGUYÊN LIỆU */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Nguyên Liệu</Text>
             {ingredients.map((ing, i) => (
               <View key={i} style={styles.ingredientRow}>
                 <View style={{ flex: 1 }}>
                   <TextInput
-                    placeholder="Tên nguyên liệu" 
+                    placeholder="Tên nguyên liệu..." 
                     value={ing.name} 
                     onChangeText={(t) => handleIngredientChange(i, 'name', t)}
-                    style={[styles.ingInput, ing.error && { borderColor: 'red', borderWidth: 1 }]}
+                    style={[styles.ingInput, ing.error && { borderColor: 'red' }]}
                   />
-                  {ing.error ? <Text style={{ color: 'red', marginBottom: 4 }}>{ing.error}</Text> : null}
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <TextInput placeholder="SL" value={ing.quantity} onChangeText={t => handleIngredientChange(i, 'quantity', t)} style={[styles.ingInput, { width: 60 }]} keyboardType="numeric"/>
                     <TextInput placeholder="Đơn vị" value={ing.unit} onChangeText={t => handleIngredientChange(i, 'unit', t)} style={[styles.ingInput, { width: 80 }]} />
@@ -313,20 +434,27 @@ export default function AddRecipeScreen() {
               </View>
             ))}
             <TouchableOpacity onPress={addIngredient} style={styles.addBtn}>
-              <Text style={styles.addBtnText}>+ Nguyên liệu</Text>
+              <Text style={styles.addBtnText}>+ Thêm nguyên liệu</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Cách làm */}
+          {/* CÁCH LÀM */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Cách Làm</Text>
             {steps.map((step, i) => (
               <View key={i} style={styles.stepContainer}>
                 <View style={styles.stepHeader}>
                   <View style={styles.stepBadge}><Text style={styles.stepBadgeText}>{i+1}</Text></View>
+                  <Text style={{ fontWeight: '600', marginLeft: 8, flex: 1 }}>Bước {i+1}</Text>
                   {steps.length > 1 && <TouchableOpacity onPress={() => removeStep(i)}><Feather name="x" size={20} color="#999" /></TouchableOpacity>}
                 </View>
-                <TextInput placeholder="Mô tả bước làm..." value={step.description} onChangeText={t => updateStepDesc(t, i)} multiline style={styles.stepInput} />
+                <TextInput 
+                    placeholder="Mô tả bước làm..." 
+                    value={step.description} 
+                    onChangeText={t => updateStepDesc(t, i)} 
+                    multiline 
+                    style={styles.stepInput} 
+                />
                 <View style={styles.stepImagesContainer}>
                   {step.images.map((img, j) => (
                     <View key={j} style={styles.stepThumbWrapper}>
@@ -343,13 +471,13 @@ export default function AddRecipeScreen() {
               </View>
             ))}
             <TouchableOpacity onPress={addStep} style={styles.addBtn}>
-              <Text style={styles.addBtnText}>+ Thêm bước</Text>
+              <Text style={styles.addBtnText}>+ Thêm bước làm</Text>
             </TouchableOpacity>
           </View>
 
         </ScrollView>
 
-        {/* Modal chọn danh mục */}
+        {/* MODAL DANH MỤC */}
         <Modal
           visible={modalVisible}
           transparent={true}
@@ -383,43 +511,64 @@ export default function AddRecipeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f4f5f7' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e0e0e0', backgroundColor: '#fff' },
+  headerTitle: { fontSize: 18, fontWeight: 'bold' },
   iconBtn: { padding: 4 },
   publishBtn: { backgroundColor: '#007bff', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 20 },
   disabledBtn: { backgroundColor: '#aaa' },
   publishText: { color: '#fff', fontWeight: '600' },
   loadingOverlay: { position: 'absolute', top: 60, left: 0, right: 0, zIndex: 10, backgroundColor: 'rgba(255,255,255,0.9)', padding: 10, alignItems: 'center' },
   loadingText: { marginTop: 5, color: '#007bff', fontWeight: '500' },
+  errorText: { color: 'red', fontSize: 12, marginBottom: 8 },
+  
   scrollContent: { padding: 16, paddingBottom: 40 },
   imageUploadSection: { alignItems: 'center', marginBottom: 24 },
-  mainImagePreview: { width: 100, height: 100, borderRadius: 50, borderWidth: 1, borderColor: '#ccc' },
-  imagePlaceholder: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center' },
-  uploadTextBtn: { color: '#555', marginTop: 8 },
+  mainImagePreview: { width: 120, height: 120, borderRadius: 12, borderWidth: 1, borderColor: '#ccc' },
+  imagePlaceholder: { width: 120, height: 120, borderRadius: 12, backgroundColor: '#e0e0e0', justifyContent: 'center', alignItems: 'center' },
+  uploadTextBtn: { color: '#555', marginTop: 8, fontSize: 13 },
+  
   section: { marginBottom: 24 },
-  input: { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 8 },
+  label: { fontSize: 14, fontWeight: '500', marginBottom: 6, color: '#333' },
+  input: { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 12 },
   textArea: { minHeight: 80, textAlignVertical: 'top' },
+  
+  // Style mới cho hàng ngang
+  row: { flexDirection: 'row', marginBottom: 12 },
+  col: { flex: 1 },
+
+  // Style cho nút Độ khó
+  difficultyRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  diffBtn: { flex: 1, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0', alignItems: 'center', backgroundColor: '#fff' },
+  diffBtnActive: { backgroundColor: '#e6f7ff', borderColor: '#007bff' },
+  diffText: { color: '#555', fontSize: 13 },
+  diffTextActive: { color: '#007bff', fontWeight: 'bold' },
+
   selectInput: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 12 },
-  sectionTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
-  ingredientRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12 },
-  ingInput: { backgroundColor: '#fff', borderRadius: 12, padding: 8, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 4 },
-  removeBtn: { marginLeft: 8, marginTop: 12 },
-  addBtn: { backgroundColor: '#eee', padding: 10, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 12, color: '#222' },
+  
+  ingredientRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#eee' },
+  ingInput: { backgroundColor: '#fff', borderRadius: 8, padding: 8, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 6 },
+  removeBtn: { marginLeft: 8, marginTop: 12, padding: 4 },
+  addBtn: { backgroundColor: '#fff', padding: 12, borderRadius: 12, alignItems: 'center', marginTop: 8, borderWidth: 1, borderColor: '#007bff', borderStyle: 'dashed' },
   addBtnText: { color: '#007bff', fontWeight: '600' },
-  stepContainer: { backgroundColor: '#fff', padding: 12, borderRadius: 12, marginBottom: 12 },
-  stepHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  
+  stepContainer: { backgroundColor: '#fff', padding: 12, borderRadius: 12, marginBottom: 12, elevation: 1 },
+  stepHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   stepBadge: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#007bff', justifyContent: 'center', alignItems: 'center' },
-  stepBadgeText: { color: '#fff', fontWeight: '600' },
-  stepInput: { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 12, padding: 8, minHeight: 60, textAlignVertical: 'top' },
-  stepImagesContainer: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
-  stepThumbWrapper: { position: 'relative', marginRight: 8, marginBottom: 8 },
-  stepThumb: { width: 60, height: 60, borderRadius: 8 },
-  removeThumbBtn: { position: 'absolute', top: -6, right: -6, backgroundColor: '#f00', borderRadius: 12, padding: 2 },
-  addStepImageBtn: { width: 60, height: 60, borderRadius: 8, borderWidth: 1, borderColor: '#ccc', justifyContent: 'center', alignItems: 'center' },
+  stepBadgeText: { color: '#fff', fontWeight: '600', fontSize: 12 },
+  stepInput: { borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8, padding: 10, minHeight: 80, textAlignVertical: 'top', backgroundColor: '#f9f9f9', marginBottom: 10 },
+  stepImagesContainer: { flexDirection: 'row', flexWrap: 'wrap' },
+  stepThumbWrapper: { position: 'relative', marginRight: 10, marginBottom: 10 },
+  stepThumb: { width: 70, height: 70, borderRadius: 8 },
+  removeThumbBtn: { position: 'absolute', top: -6, right: -6, backgroundColor: '#ff4d4f', borderRadius: 10, padding: 4 },
+  addStepImageBtn: { width: 70, height: 70, borderRadius: 8, borderWidth: 1, borderColor: '#ccc', borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center' },
+  
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#fff', maxHeight: '50%', borderTopLeftRadius: 12, borderTopRightRadius: 12 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
-  modalTitle: { fontSize: 16, fontWeight: '600' },
-  modalItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  modalItemText: { fontSize: 16 },
+  modalContent: { backgroundColor: '#fff', maxHeight: '60%', borderTopLeftRadius: 16, borderTopRightRadius: 16 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
+  modalTitle: { fontSize: 16, fontWeight: 'bold' },
+  modalItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  modalItemText: { fontSize: 16, color: '#333' },
   modalItemTextSelected: { fontWeight: '600', color: '#007bff' },
 });
