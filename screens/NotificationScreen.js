@@ -47,7 +47,12 @@ export default function NotificationScreen() {
       }
     }
 
-    if (item.targetId) {
+    if (item.type === 'FOLLOW') {
+    // targetId = ID của người theo dõi bạn
+    navigation.navigate('Profile', { userId: item.targetId });
+    } 
+    else {
+        // targetId = ID của công thức
         navigation.navigate('RecipeDetail', { id: item.targetId });
     }
   };
