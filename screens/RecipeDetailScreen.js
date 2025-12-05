@@ -10,7 +10,8 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  Share 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -77,7 +78,19 @@ export default function RecipeDetailScreen() {
     }, [id])
   );
 
-  // --- HANDLERS ---
+  // 1. SHARE HANDLER 
+  const handleShare = async () => {
+    try {
+      const url = `https://cookinote.com/recipe/${recipe.id}`;
+      await Share.share({
+        message: `Xem công thức món ${recipe.title} trên CookiNote: ${url}`,
+        title: recipe.title, 
+      });
+    } catch (error) {
+      console.log(error.message);
+    }
+  };
+
   const handleLike = async () => {
     const originalLiked = isLiked;
     const originalCount = likeCount;
@@ -150,12 +163,18 @@ export default function RecipeDetailScreen() {
     );
   };
 
-  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#007bff" /></View>;
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#007bff" />
+      </View>
+    );
+  }
+
   if (!recipe) return null;
 
   const sortedSteps = [...(recipe.steps || [])].sort((a, b) => a.stepOrder - b.stepOrder);
   const isOwner = currentUser?.id === recipe.user?.id;
-  
   const getAvatar = (user) => user?.medias?.slice().reverse().find(m => m.type === 'AVATAR')?.media?.url;
   const authorAvatar = getAvatar(recipe.user);
   const myAvatar = getAvatar(currentUser);
@@ -169,28 +188,36 @@ export default function RecipeDetailScreen() {
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
                 <Feather name="arrow-left" size={26} color="#333" />
             </TouchableOpacity>
-            {isOwner && (
-                <View style={styles.headerActions}>
-                    <TouchableOpacity onPress={handleEdit} style={styles.editBtn}>
-                        <Feather name="edit-2" size={18} color="#007bff" />
-                        <Text style={styles.editText}>Sửa</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={handleDelete} style={styles.deleteBtn}>
-                        <Feather name="trash-2" size={18} color="#ef4444" />
-                        <Text style={styles.deleteText}>Xóa</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
+            
+            {/* RIGHT ACTIONS GROUP */}
+            <View style={styles.headerActions}>
+                {/* SHARE BUTTON */}
+                <TouchableOpacity onPress={handleShare} style={styles.shareBtn}>
+                    <Feather name="share-2" size={18} color="#333" />
+                </TouchableOpacity>
+
+                {/* OWNER ACTIONS (Edit/Delete) */}
+                {isOwner && (
+                    <>
+                        <TouchableOpacity onPress={handleEdit} style={styles.editBtn}>
+                            <Feather name="edit-2" size={18} color="#007bff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={handleDelete} style={styles.deleteBtn}>
+                            <Feather name="trash-2" size={18} color="#ef4444" />
+                        </TouchableOpacity>
+                    </>
+                )}
+            </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent}>
-            {/* ẢNH CHÍNH */}
+            {/* MAIN IMAGE */}
             <Image 
                 source={{ uri: recipe.medias?.[0]?.media?.url || 'https://via.placeholder.com/400' }} 
                 style={styles.mainImage} 
             />
 
-            {/* TIÊU ĐỀ & LIKE */}
+            {/* TITLE & LIKE */}
             <View style={styles.titleRow}>
                 <Text style={styles.title}>{recipe.title}</Text>
                 <TouchableOpacity 
@@ -202,7 +229,7 @@ export default function RecipeDetailScreen() {
                 </TouchableOpacity>
             </View>
 
-            {/* THÔNG TIN TÁC GIẢ */}
+            {/* AUTHOR INFO */}
             <TouchableOpacity 
                 style={styles.authorInfo} 
                 onPress={() => navigation.navigate('Profile', { userId: recipe.user?.id })}
@@ -220,7 +247,7 @@ export default function RecipeDetailScreen() {
                 </View>
             </TouchableOpacity>
 
-            {/* META */}
+            {/* META INFO */}
             <View style={styles.metaContainer}>
                 <View style={styles.metaItem}>
                     <Feather name="clock" size={16} color="#555" />
@@ -238,19 +265,18 @@ export default function RecipeDetailScreen() {
                 </View>
             </View>
 
-          {/*MÔ TẢ MÓN ĂN  */}
+            {/* DESCRIPTION */}
             {recipe.description ? (
                 <View style={styles.descContainer}>
                     <Feather name="message-circle" size={24} color="#007bff" style={styles.descIcon} />
                     <View style={styles.descContent}>
-                        <Text style={styles.descLabel}>Mô tả</Text>
+                        <Text style={styles.descLabel}>Lời dẫn</Text>
                         <Text style={styles.descText}>{recipe.description}</Text>
                     </View>
                 </View>
             ) : null}
-        
 
-            {/* NGUYÊN LIỆU */}
+            {/* INGREDIENTS */}
             <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>Nguyên liệu</Text>
@@ -271,7 +297,7 @@ export default function RecipeDetailScreen() {
                 ))}
             </View>
 
-            {/* CÁCH LÀM */}
+            {/* STEPS */}
             <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Cách làm</Text>
                 {sortedSteps.map((step) => (
@@ -292,7 +318,7 @@ export default function RecipeDetailScreen() {
                 ))}
             </View>
 
-            {/* BÌNH LUẬN */}
+            {/* COMMENTS */}
             <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Bình luận ({recipe.comments?.length || 0})</Text>
                 {recipe.comments?.map(c => {
@@ -302,7 +328,9 @@ export default function RecipeDetailScreen() {
                             {cAvt ? (
                                 <Image source={{ uri: cAvt }} style={styles.commentAvatar} />
                             ) : (
-                                <View style={styles.commentAvatarPlace}><Text>{c.user?.username?.[0]}</Text></View>
+                                <View style={styles.commentAvatarPlace}>
+                                    <Text>{c.user?.username?.[0]}</Text>
+                                </View>
                             )}
                             <View style={styles.commentBubble}>
                                 <Text style={styles.commentUser}>{c.user?.username}</Text>
@@ -314,12 +342,14 @@ export default function RecipeDetailScreen() {
             </View>
         </ScrollView>
 
-        {/* INPUT COMMENT */}
+        {/* COMMENT INPUT */}
         <View style={styles.commentInputContainer}>
             {myAvatar ? (
                 <Image source={{ uri: myAvatar }} style={styles.myAvatar} />
             ) : (
-                <View style={styles.myAvatarPlace}><Text>{currentUser?.username?.[0]}</Text></View>
+                <View style={styles.myAvatarPlace}>
+                    <Text>{currentUser?.username?.[0]}</Text>
+                </View>
             )}
             <TextInput 
                 placeholder="Viết bình luận..." 
@@ -328,7 +358,11 @@ export default function RecipeDetailScreen() {
                 style={styles.commentInput} 
             />
             <TouchableOpacity onPress={handleComment} disabled={submitting} style={styles.sendBtn}>
-                {submitting ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="send" size={20} color="#fff" />}
+                {submitting ? (
+                    <ActivityIndicator size="small" color="#fff" /> 
+                ) : (
+                    <Feather name="send" size={20} color="#fff" />
+                )}
             </TouchableOpacity>
         </View>
 
@@ -338,124 +372,378 @@ export default function RecipeDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f5f7' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  scrollContent: { paddingBottom: 80 },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f4f5f7' 
+  },
+  center: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  scrollContent: { 
+    paddingBottom: 80 
+  },
 
   // HEADER
   header: { 
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', 
-    padding: 16, backgroundColor: '#f4f5f7' 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    padding: 16, 
+    backgroundColor: '#f4f5f7' 
   },
-  backBtn: { padding: 4 },
-  headerActions: { flexDirection: 'row', gap: 10 },
-
-  deleteBtn: { 
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff1f2', 
-    paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: '#fecaca', gap: 4 
+  backBtn: { 
+    padding: 4 
   },
-  deleteText: { color: '#ef4444', fontWeight: '600', fontSize: 13 },
+  headerActions: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 10 
+  },
+  
+  // BUTTONS
+  shareBtn: { 
+    width: 36, 
+    height: 36, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    backgroundColor: '#fff', 
+    borderRadius: 18, 
+    borderWidth: 1, 
+    borderColor: '#ddd', 
+    elevation: 1 
+  },
   editBtn: { 
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#e6f7ff', 
-    paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: '#b3e0ff', gap: 4 
+    width: 36, 
+    height: 36, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    backgroundColor: '#e6f7ff', 
+    borderRadius: 18, 
+    borderWidth: 1, 
+    borderColor: '#b3e0ff' 
   },
-  editText: { color: '#007bff', fontWeight: '600', fontSize: 13 },
+  deleteBtn: { 
+    width: 36, 
+    height: 36, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    backgroundColor: '#fff1f2', 
+    borderRadius: 18, 
+    borderWidth: 1, 
+    borderColor: '#fecaca' 
+  },
 
   // MAIN CONTENT
-  mainImage: { width: '100%', height: 260, borderRadius: 20, marginBottom: 16, backgroundColor: '#eee' },
-  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 16, marginBottom: 12 },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#222', flex: 1, marginRight: 8 },
-  likeBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: '#eee', gap: 6 },
-  likedBtn: { backgroundColor: '#ffe5e8', borderColor: '#ffcbd3' },
-  likeCount: { fontSize: 14, color: '#555', fontWeight: '600' },
+  mainImage: { 
+    width: '100%', 
+    height: 260, 
+    borderRadius: 20, 
+    marginBottom: 16, 
+    backgroundColor: '#eee' 
+  },
+  titleRow: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'flex-start', 
+    paddingHorizontal: 16, 
+    marginBottom: 12 
+  },
+  title: { 
+    fontSize: 24, 
+    fontWeight: 'bold', 
+    color: '#222', 
+    flex: 1, 
+    marginRight: 8 
+  },
+  likeBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#fff', 
+    paddingVertical: 6, 
+    paddingHorizontal: 12, 
+    borderRadius: 20, 
+    borderWidth: 1, 
+    borderColor: '#eee', 
+    gap: 6 
+  },
+  likedBtn: { 
+    backgroundColor: '#ffe5e8', 
+    borderColor: '#ffcbd3' 
+  },
+  likeCount: { 
+    fontSize: 14, 
+    color: '#555', 
+    fontWeight: '600' 
+  },
 
   // AUTHOR
-  authorInfo: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 16, gap: 10 },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
-  avatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' },
-  avatarText: { fontSize: 16, fontWeight: 'bold', color: '#555' },
-  authorName: { fontWeight: '600', fontSize: 15, color: '#333' },
-  date: { fontSize: 12, color: '#888' },
+  authorInfo: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    paddingHorizontal: 16, 
+    marginBottom: 16, 
+    gap: 10 
+  },
+  avatar: { 
+    width: 40, 
+    height: 40, 
+    borderRadius: 20 
+  },
+  avatarPlaceholder: { 
+    width: 40, 
+    height: 40, 
+    borderRadius: 20, 
+    backgroundColor: '#eee', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  avatarText: { 
+    fontSize: 16, 
+    fontWeight: 'bold', 
+    color: '#555' 
+  },
+  authorName: { 
+    fontWeight: '600', 
+    fontSize: 15, 
+    color: '#333' 
+  },
+  date: { 
+    fontSize: 12, 
+    color: '#888' 
+  },
 
   // META
-  metaContainer: { flexDirection: 'row', justifyContent: 'space-around', backgroundColor: '#fff', marginHorizontal: 16, padding: 12, borderRadius: 16, marginBottom: 20, elevation: 1 },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  metaText: { color: '#555', fontWeight: '500', fontSize: 13 },
+  metaContainer: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-around', 
+    backgroundColor: '#fff', 
+    marginHorizontal: 16, 
+    padding: 12, 
+    borderRadius: 16, 
+    marginBottom: 20, 
+    elevation: 1 
+  },
+  metaItem: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    gap: 6 
+  },
+  metaText: { 
+    color: '#555', 
+    fontWeight: '500', 
+    fontSize: 13 
+  },
 
-
-  // STYLE MỚI CHO PHẦN MÔ TẢ
-  descContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    marginHorizontal: 16,
-    marginBottom: 24,
-    padding: 16,
-    borderRadius: 16,
-    // Tạo hiệu ứng đổ bóng nhẹ
-    elevation: 2, // Android
-    shadowColor: '#000', // iOS
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    // Đường viền trang trí bên trái
-    borderLeftWidth: 4,
-    borderLeftColor: '#007bff',
+  // DESC
+  descContainer: { 
+    flexDirection: 'row', 
+    backgroundColor: '#fff', 
+    marginHorizontal: 16, 
+    marginBottom: 24, 
+    padding: 16, 
+    borderRadius: 16, 
+    elevation: 2, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.05, 
+    shadowRadius: 4, 
+    borderLeftWidth: 4, 
+    borderLeftColor: '#007bff' 
   },
-  descIcon: {
-    marginTop: 2,
-    marginRight: 12,
+  descIcon: { 
+    marginTop: 2, 
+    marginRight: 12 
   },
-  descContent: {
-    flex: 1, 
+  descContent: { 
+    flex: 1 
   },
-  descLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#007bff',
-    textTransform: 'uppercase',
-    marginBottom: 4,
-    letterSpacing: 0.5,
+  descLabel: { 
+    fontSize: 12, 
+    fontWeight: '700', 
+    color: '#007bff', 
+    textTransform: 'uppercase', 
+    marginBottom: 4, 
+    letterSpacing: 0.5 
   },
-  descText: {
-    fontSize: 15,
-    color: '#444',
+  descText: { 
+    fontSize: 15, 
+    color: '#444', 
     lineHeight: 24, 
     textAlign: 'justify', 
-    fontStyle: 'italic', 
+    fontStyle: 'italic' 
   },
 
   // SECTIONS
-  section: { marginBottom: 24, paddingHorizontal: 16 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, borderBottomWidth: 1, borderBottomColor: '#eaeaea', paddingBottom: 8 },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#222', marginBottom: 12 },
-  
-  addListBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e6f7ff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, gap: 6 },
-  addListText: { color: '#007bff', fontSize: 12, fontWeight: '600' },
-  
-  ingredientRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  ingName: { fontSize: 15, color: '#333' },
-  ingQty: { fontSize: 15, color: '#555', fontWeight: '500' },
+  section: { 
+    marginBottom: 24, 
+    paddingHorizontal: 16 
+  },
+  sectionHeader: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 12, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#eaeaea', 
+    paddingBottom: 8 
+  },
+  sectionTitle: { 
+    fontSize: 18, 
+    fontWeight: 'bold', 
+    color: '#222', 
+    marginBottom: 12 
+  },
+  addListBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#e6f7ff', 
+    paddingVertical: 6, 
+    paddingHorizontal: 12, 
+    borderRadius: 20, 
+    gap: 6 
+  },
+  addListText: { 
+    color: '#007bff', 
+    fontSize: 12, 
+    fontWeight: '600' 
+  },
+  ingredientRow: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    paddingVertical: 10, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#f0f0f0' 
+  },
+  ingName: { 
+    fontSize: 15, 
+    color: '#333' 
+  },
+  ingQty: { 
+    fontSize: 15, 
+    color: '#555', 
+    fontWeight: '500' 
+  },
 
   // STEPS
-  stepCard: { backgroundColor: '#fff', borderRadius: 20, marginBottom: 16, padding: 16, paddingLeft: 50, position: 'relative', elevation: 2,shadowColor: '#000', shadowOffset: { width: 0, height: 2 },shadowOpacity: 0.05,shadowRadius: 4,borderLeftWidth: 4,borderLeftColor: '#007bff', },
-  stepBadge: { position: 'absolute', top: 16, left: 16, width: 30, height: 30, backgroundColor: '#3b82f6', borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
-  stepNum: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  stepDesc: { fontSize: 15, color: '#333', lineHeight: 22, marginBottom: 12 },
-  stepImage: { width: '100%', height: 200, borderRadius: 12, marginTop: 8 },
-  stepContent: { flex: 1 },
-  
+  stepCard: { 
+    backgroundColor: '#fff', 
+    borderRadius: 20, 
+    marginBottom: 16, 
+    padding: 16, 
+    paddingLeft: 50, 
+    position: 'relative', 
+    elevation: 2, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.05, 
+    shadowRadius: 4 
+  },
+  stepBadge: { 
+    position: 'absolute', 
+    top: 16, 
+    left: 16, 
+    width: 30, 
+    height: 30, 
+    backgroundColor: '#3b82f6', 
+    borderRadius: 15, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  stepNum: { 
+    color: '#fff', 
+    fontWeight: 'bold', 
+    fontSize: 14 
+  },
+  stepDesc: { 
+    fontSize: 15, 
+    color: '#333', 
+    lineHeight: 22, 
+    marginBottom: 12 
+  },
+  stepImage: { 
+    width: '100%', 
+    height: 200, 
+    borderRadius: 12, 
+    marginTop: 8 
+  },
+  stepContent: { 
+    flex: 1 
+  },
 
   // COMMENTS & INPUT
-  commentItem: { flexDirection: 'row', marginBottom: 12, gap: 10 },
-  commentAvatar: { width: 36, height: 36, borderRadius: 18 },
-  commentAvatarPlace: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' },
-  commentBubble: { flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 10, elevation: 1 },
-  commentUser: { fontWeight: 'bold', fontSize: 13, marginBottom: 2, color: '#333' },
-  commentText: { fontSize: 14, color: '#444' },
-
-  commentInputContainer: { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee', gap: 10 },
-  myAvatar: { width: 32, height: 32, borderRadius: 16 },
-  myAvatarPlace: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' },
-  commentInput: { flex: 1, backgroundColor: '#f4f5f7', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, fontSize: 14 },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#007bff', justifyContent: 'center', alignItems: 'center' },
+  commentItem: { 
+    flexDirection: 'row', 
+    marginBottom: 12, 
+    gap: 10 
+  },
+  commentAvatar: { 
+    width: 36, 
+    height: 36, 
+    borderRadius: 18 
+  },
+  commentAvatarPlace: { 
+    width: 36, 
+    height: 36, 
+    borderRadius: 18, 
+    backgroundColor: '#eee', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  commentBubble: { 
+    flex: 1, 
+    backgroundColor: '#fff', 
+    borderRadius: 16, 
+    padding: 10, 
+    elevation: 1 
+  },
+  commentUser: { 
+    fontWeight: 'bold', 
+    fontSize: 13, 
+    marginBottom: 2, 
+    color: '#333' 
+  },
+  commentText: { 
+    fontSize: 14, 
+    color: '#444' 
+  },
+  commentInputContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    padding: 12, 
+    backgroundColor: '#fff', 
+    borderTopWidth: 1, 
+    borderTopColor: '#eee', 
+    gap: 10 
+  },
+  myAvatar: { 
+    width: 32, 
+    height: 32, 
+    borderRadius: 16 
+  },
+  myAvatarPlace: { 
+    width: 32, 
+    height: 32, 
+    borderRadius: 16, 
+    backgroundColor: '#eee', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  commentInput: { 
+    flex: 1, 
+    backgroundColor: '#f4f5f7', 
+    borderRadius: 20, 
+    paddingHorizontal: 16, 
+    paddingVertical: 8, 
+    fontSize: 14 
+  },
+  sendBtn: { 
+    width: 40, 
+    height: 40, 
+    borderRadius: 20, 
+    backgroundColor: '#007bff', 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
 });
