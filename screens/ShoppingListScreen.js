@@ -1,13 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   View, 
   Text, 
   TouchableOpacity, 
-  FlatList, 
+  SectionList, 
   StyleSheet, 
   Alert, 
-  ActivityIndicator,
-  ScrollView 
+  ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -25,6 +24,7 @@ export default function ShoppingListScreen() {
       setLists(res.data.data || []);
     } catch (err) {
       console.error(err);
+      Alert.alert('Lỗi', 'Không thể tải danh sách đi chợ');
     } finally {
       setLoading(false);
     }
@@ -34,157 +34,181 @@ export default function ShoppingListScreen() {
     fetchLists();
   }, []);
 
-  // --- HANDLERS ---
+  // --- XỬ LÝ DỮ LIỆU ---
+  const groupedData = useMemo(() => {
+    if (!lists.length) return [];
 
-  const handleDeleteList = async (listId) => {
-    Alert.alert(
-        'Xác nhận xóa',
-        'Bạn có chắc muốn xóa danh sách này?',
-        [
-            { text: 'Hủy', style: 'cancel' },
-            { 
-                text: 'Xóa', 
-                style: 'destructive',
-                onPress: async () => {
-                    // Optimistic UI update
-                    const prevLists = [...lists];
-                    setLists(lists.filter(l => l.id !== listId));
-                    
-                    try {
-                        await apiClient.delete(`/shopping-list/${listId}`);
-                    } catch (err) {
-                        setLists(prevLists); // Rollback
-                        Alert.alert('Lỗi', 'Không thể xóa danh sách');
-                    }
-                }
-            }
-        ]
-    );
-  };
+    const groups = {};
 
-  const handleToggleItem = async (item, listId) => {
-    const newCheckedState = !item.purchased;
+    lists.forEach(list => {
+      // 👇 SỬA Ở ĐÂY: Dùng createdAt để hiển thị "Ngày thêm vào danh sách"
+      const rawDate = list.createdAt ? new Date(list.createdAt) : new Date();
+      
+      const dateKey = rawDate.toISOString().split('T')[0];
 
-    // 1. Optimistic UI Update
-    setLists(currentLists => 
-        currentLists.map(list => {
-            if (list.id === listId) {
-                return {
-                    ...list,
-                    items: list.items.map(i => 
-                        i.ingredient.id === item.ingredient.id 
-                        ? { ...i, purchased: newCheckedState } 
-                        : i
-                    )
-                };
-            }
-            return list;
-        })
-    );
-
-    // 2. Call API
-    try {
-        const payload = {
-            shoppingList: { id: listId },
-            ingredient: { id: item.ingredient.id },
-            quantity: item.quantity,
-            unit: item.unit,
-            purchased: newCheckedState
+      if (!groups[dateKey]) {
+        groups[dateKey] = {
+          title: `Ngày ${rawDate.getDate()}/${rawDate.getMonth() + 1}/${rawDate.getFullYear()}`,
+          dateKey: dateKey,
+          items: {},
+          listIds: new Set()
         };
-        await apiClient.patch('/shopping-items', payload);
+      }
+
+      groups[dateKey].listIds.add(list.id);
+
+      list.items.forEach(item => {
+        const itemId = item.ingredient.id;
+        const mergeKey = `${itemId}_${item.unit}`;
+
+        if (groups[dateKey].items[mergeKey]) {
+          groups[dateKey].items[mergeKey].quantity += item.quantity;
+          if (!item.purchased) groups[dateKey].items[mergeKey].purchased = false; 
+          groups[dateKey].items[mergeKey].originalItems.push({ 
+            listId: list.id, 
+            ingredientId: itemId,
+            purchased: item.purchased 
+          });
+        } else {
+          groups[dateKey].items[mergeKey] = {
+            ...item,
+            originalItems: [{ 
+              listId: list.id, 
+              ingredientId: itemId,
+              purchased: item.purchased 
+            }]
+          };
+        }
+      });
+    });
+
+    return Object.keys(groups).sort().reverse() // reverse để ngày mới nhất lên đầu
+      .map(dateKey => ({
+        title: groups[dateKey].title,
+        dateKey: groups[dateKey].dateKey,
+        listIds: Array.from(groups[dateKey].listIds),
+        data: Object.values(groups[dateKey].items).map(item => ({
+          ...item,
+          uniqueRowKey: `${dateKey}_${item.ingredient.id}_${item.unit}`
+        }))
+      }));
+
+  }, [lists]);
+
+  const handleToggleMergedItem = async (mergedItem) => {
+    const newCheckedState = !mergedItem.purchased;
+
+    const updatedLists = lists.map(list => {
+      const listItems = list.items.map(item => {
+        const isMatch = mergedItem.originalItems.some(
+          oi => oi.listId === list.id && oi.ingredientId === item.ingredient.id
+        );
+        return isMatch ? { ...item, purchased: newCheckedState } : item;
+      });
+      return { ...list, items: listItems };
+    });
+
+    setLists(updatedLists);
+
+    try {
+      const updatePromises = mergedItem.originalItems.map(oi => {
+        return apiClient.patch('/shopping-items', {
+            shoppingList: { id: oi.listId },
+            ingredient: { id: oi.ingredientId },
+            purchased: newCheckedState
+        });
+      });
+      await Promise.all(updatePromises);
     } catch (err) {
-        console.error("Update error:", err);
-        // Nếu lỗi thì load lại data để đồng bộ
-        fetchLists();
-        Alert.alert('Lỗi', 'Cập nhật thất bại');
+      console.error(err);
+      fetchLists();
     }
   };
 
-  // --- RENDER ITEM ---
-  const renderShoppingList = ({ item: list }) => {
-    const pendingItems = list.items.filter(i => !i.purchased);
-    const purchasedItems = list.items.filter(i => i.purchased);
+  const handleDeleteGroup = (dateTitle, listIds) => {
+    Alert.alert(
+      'Xóa danh sách',
+      `Bạn có muốn xóa toàn bộ danh sách của ${dateTitle}?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            const newLists = lists.filter(l => !listIds.includes(l.id));
+            setLists(newLists);
 
-    return (
-      <View style={styles.card}>
-        {/* Card Header */}
-        <View style={styles.cardHeader}>
-            <View>
-                <Text style={styles.cardTitle}>{list.title || 'Danh sách mua sắm'}</Text>
-                <Text style={styles.cardDate}>
-                    {new Date(list.plannedDate).toLocaleDateString('vi-VN')}
-                </Text>
-            </View>
-            <TouchableOpacity onPress={() => handleDeleteList(list.id)} style={styles.deleteBtn}>
-                <Feather name="trash-2" size={20} color="#ff4757" />
-            </TouchableOpacity>
-        </View>
-
-        {/* Items List */}
-        <View style={styles.itemsContainer}>
-            {/* Chưa mua */}
-            {pendingItems.map(i => (
-                <TouchableOpacity 
-                    key={i.ingredient.id} 
-                    style={styles.itemRow} 
-                    onPress={() => handleToggleItem(i, list.id)}
-                    activeOpacity={0.7}
-                >
-                    <Feather name="square" size={22} color="#ccc" />
-                    <View style={styles.itemTextContainer}>
-                        <Text style={styles.itemName}>{i.ingredient.name}</Text>
-                        <Text style={styles.itemQty}>{i.quantity} {i.unit}</Text>
-                    </View>
-                </TouchableOpacity>
-            ))}
-
-            {/* Đã mua */}
-            {purchasedItems.length > 0 && (
-                <>
-                    <View style={styles.divider} />
-                    <Text style={styles.purchasedHeader}>ĐÃ MUA ({purchasedItems.length})</Text>
-                    {purchasedItems.map(i => (
-                        <TouchableOpacity 
-                            key={i.ingredient.id} 
-                            style={styles.itemRow} 
-                            onPress={() => handleToggleItem(i, list.id)}
-                            activeOpacity={0.7}
-                        >
-                            <Feather name="check-square" size={22} color="#4CAF50" />
-                            <View style={styles.itemTextContainer}>
-                                <Text style={[styles.itemName, styles.strikethrough]}>{i.ingredient.name}</Text>
-                                <Text style={[styles.itemQty, styles.strikethrough]}>{i.quantity} {i.unit}</Text>
-                            </View>
-                        </TouchableOpacity>
-                    ))}
-                </>
-            )}
-        </View>
-      </View>
+            try {
+              await Promise.all(listIds.map(id => apiClient.delete(`/shopping-list/${id}`)));
+            } catch (error) {
+              console.error(error);
+              Alert.alert('Lỗi', 'Không thể xóa danh sách');
+              fetchLists();
+            }
+          }
+        }
+      ]
     );
   };
 
+  const renderItem = ({ item }) => (
+    <TouchableOpacity 
+      style={styles.itemRow} 
+      onPress={() => handleToggleMergedItem(item)}
+      activeOpacity={0.7}
+    >
+      <Feather 
+        name={item.purchased ? "check-square" : "square"} 
+        size={22} 
+        color={item.purchased ? "#4CAF50" : "#ccc"} 
+      />
+      <View style={styles.itemTextContainer}>
+        <Text style={[styles.itemName, item.purchased && styles.strikethrough]}>
+          {item.ingredient.name}
+        </Text>
+        <Text style={[styles.itemQty, item.purchased && styles.strikethrough]}>
+          {parseFloat(item.quantity.toFixed(2))} {item.unit}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  const renderSectionHeader = ({ section }) => (
+    <View style={styles.sectionHeader}>
+      <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
+        <Feather name="clock" size={16} color="#007bff" />
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+      </View>
+      
+      <TouchableOpacity 
+        onPress={() => handleDeleteGroup(section.title, section.listIds)}
+        style={{ padding: 4 }}
+      >
+        <Feather name="trash-2" size={18} color="#ff4757" />
+      </TouchableOpacity>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Feather name="arrow-left" size={26} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Danh sách đi chợ</Text>
-        <View style={{ width: 26 }} />
+        <View style={{ width: 26 }} /> 
       </View>
 
       {loading ? (
-        <View style={styles.center}>
-            <ActivityIndicator size="large" color="#007bff" />
-        </View>
+        <View style={styles.center}><ActivityIndicator size="large" color="#007bff" /></View>
       ) : (
-        <FlatList
-          data={lists}
-          keyExtractor={item => item.id.toString()}
-          renderItem={renderShoppingList}
+        <SectionList
+          sections={groupedData}
+          keyExtractor={(item) => item.uniqueRowKey}
+          renderItem={renderItem}
+          renderSectionHeader={renderSectionHeader}
           contentContainerStyle={styles.listContent}
+          stickySectionHeadersEnabled={false}
           ListEmptyComponent={
             <Text style={styles.emptyText}>Bạn chưa có danh sách đi chợ nào.</Text>
           }
@@ -198,7 +222,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7f8fa' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  // Header
   header: { 
     flexDirection: 'row', 
     alignItems: 'center', 
@@ -211,65 +234,46 @@ const styles = StyleSheet.create({
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 18, fontWeight: '600', color: '#333' },
 
-  listContent: { padding: 16, paddingBottom: 30 },
+  listContent: { paddingBottom: 30 },
 
-  // Card
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 20,
-    // Shadow
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-    overflow: 'hidden'
-  },
-  cardHeader: {
+  sectionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    backgroundColor: '#fff'
+    justifyContent: 'space-between',
+    backgroundColor: '#e3f2fd',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginHorizontal: 16,
+    marginTop: 20,
+    marginBottom: 8,
+    borderRadius: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2
   },
-  cardTitle: { 
-  fontSize: 17,
-  fontWeight: '600',
-  color: '#333',
-  marginBottom: 4,
-  maxWidth: 250,        
-  flexShrink: 1,       
-  flexWrap: 'wrap'      
-},
+  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#007bff' },
 
-  cardDate: { fontSize: 13, color: '#007bff', fontWeight: '500' },
-  deleteBtn: { padding: 8 },
-
-  itemsContainer: { padding: 16 },
-  
-  // Item Row
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f9f9f9'
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginBottom: 1,
+    borderRadius: 4
   },
-  itemTextContainer: { flex: 1, marginLeft: 12, flexDirection: 'row', justifyContent: 'space-between' },
-  itemName: { fontSize: 15, color: '#333', flex: 1 },
-  itemQty: { fontSize: 14, color: '#666', fontWeight: '500' },
+  itemTextContainer: { flex: 1, marginLeft: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  itemName: { fontSize: 15, color: '#333', flex: 1, fontWeight: '500' },
+  itemQty: { fontSize: 14, color: '#666', fontWeight: 'bold' },
   
   strikethrough: { 
     textDecorationLine: 'line-through', 
-    color: '#aaa' 
+    color: '#aaa',
+    fontStyle: 'italic'
   },
-
-  // Purchased Section
-  divider: { height: 1, backgroundColor: '#eee', marginVertical: 12 },
-  purchasedHeader: { fontSize: 12, fontWeight: '700', color: '#888', marginBottom: 4, letterSpacing: 0.5 },
 
   emptyText: { textAlign: 'center', marginTop: 50, color: '#999', fontSize: 16 },
 });
