@@ -18,6 +18,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons'; 
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker'; 
+import * as FileSystem from 'expo-file-system';       
 import apiClient from '../apiClient';
 
 export default function AddRecipeScreen() {
@@ -32,13 +34,18 @@ export default function AddRecipeScreen() {
   const [description, setDescription] = useState('');
   
   // STATE CHO: THỜI GIAN, KHẨU PHẦN, ĐỘ KHÓ
-  const [cookTime, setCookTime] = useState('30'); // Mặc định 30 phút
-  const [servings, setServings] = useState('2');  // Mặc định 2 người
-  const [difficulty, setDifficulty] = useState('EASY'); // Mặc định Dễ
+  const [cookTime, setCookTime] = useState('30'); 
+  const [servings, setServings] = useState('2');  
+  const [difficulty, setDifficulty] = useState('EASY'); 
 
   const [allCategories, setAllCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
+
+  // 🔹 STATE CHO AI
+  const [aiModalVisible, setAiModalVisible] = useState(false);
+  const [aiInputText, setAiInputText] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
 
   const [ingredients, setIngredients] = useState([
     { name: '', quantity: '', unit: '', note: '', required: true, error: '' }
@@ -53,12 +60,10 @@ export default function AddRecipeScreen() {
 
   // --- 1. LOAD DATA ---
   useEffect(() => {
-    // Load danh mục
     apiClient.get('/category')
       .then(res => setAllCategories(res.data.data || []))
       .catch(err => console.error("Lỗi tải danh mục:", err));
 
-    // Nếu đang sửa, load dữ liệu công thức
     if (isEditing) {
       fetchRecipeData();
     }
@@ -70,18 +75,15 @@ export default function AddRecipeScreen() {
       const res = await apiClient.get(`/recipes/${recipeId}`);
       const data = res.data.data;
 
-      // Điền dữ liệu cơ bản
       setTitle(data.title);
       setDescription(data.description || '');
       
-      // Điền dữ liệu MỚI (Time, Servings, Difficulty)
       if (data.cookTimeMinutes) setCookTime(String(data.cookTimeMinutes));
       if (data.servings) setServings(String(data.servings));
       if (data.difficulty) setDifficulty(data.difficulty);
       
       if (data.category) setSelectedCategory(data.category);
 
-      // Điền nguyên liệu
       if (data.ingredients && data.ingredients.length > 0) {
         const mappedIngs = data.ingredients.map(i => ({
           name: i.ingredient.name,
@@ -94,13 +96,11 @@ export default function AddRecipeScreen() {
         setIngredients(mappedIngs);
       }
 
-      // Điền ảnh đại diện
       const avatarMedia = data.medias?.find(m => m.type === 'AVATAR');
       if (avatarMedia) {
         setMainImage({ uri: avatarMedia.media.url, id: avatarMedia.media.id });
       }
 
-      // Điền các bước
       if (data.steps && data.steps.length > 0) {
         const sortedSteps = data.steps.sort((a, b) => a.stepOrder - b.stepOrder);
         const mappedSteps = sortedSteps.map(s => ({
@@ -152,9 +152,98 @@ export default function AddRecipeScreen() {
     }
   };
 
+  // 🔹 --- FILE PICKER FOR AI ---
+const pickDocument = async () => {
+    try {
+      console.log("Đang mở trình chọn file...");
+      
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*', 
+        copyToCacheDirectory: true, 
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const fileUri = result.assets[0].uri;
+        console.log("URI file:", fileUri);
+
+        //  Dùng fetch để đọc file text
+        const response = await fetch(fileUri);
+        const content = await response.text();
+        
+        console.log("Đọc thành công!");
+        setAiInputText(content);
+      }
+    } catch (err) {
+      console.error("LỖI ĐỌC FILE:", err);
+      Alert.alert("Lỗi", "Chi tiết lỗi: " + err.message);
+    }
+  };
+  // 🔹 --- AI MAGIC FILL HANDLER ---
+  const handleGenerateByAI = async () => {
+    if (!aiInputText.trim()) return Alert.alert('Lỗi', 'Vui lòng nhập nội dung hoặc chọn file');
+    
+    setAiLoading(true);
+    try {
+      // Gọi API Backend
+      const res = await apiClient.post('/ai/generate-recipe', { content: aiInputText });
+      const aiDataString = res.data.data;
+      
+      // Parse JSON
+      let aiData;
+      try {
+        aiData = JSON.parse(aiDataString);
+      } catch (e) {
+        // Fallback nếu AI trả về lỗi định dạng
+        console.error("AI JSON Parse Error:", e);
+        Alert.alert("Lỗi AI", "Dữ liệu AI trả về không đúng định dạng JSON.");
+        setAiLoading(false);
+        return;
+      }
+
+      // Điền vào Form
+      if (aiData.title) setTitle(aiData.title);
+      if (aiData.description) setDescription(aiData.description);
+      if (aiData.cookTimeMinutes) setCookTime(String(aiData.cookTimeMinutes));
+      if (aiData.servings) setServings(String(aiData.servings));
+      if (aiData.difficulty) setDifficulty(aiData.difficulty);
+
+      // Map Ingredients
+      if (aiData.ingredients && aiData.ingredients.length > 0) {
+        const newIngs = aiData.ingredients.map(ing => ({
+          name: ing.name,
+          quantity: String(ing.quantity || ''),
+          unit: ing.unit || '',
+          note: ing.note || '',
+          required: true,
+          error: ''
+        }));
+        setIngredients(newIngs);
+      }
+
+      // Map Steps
+      if (aiData.steps && aiData.steps.length > 0) {
+        const newSteps = aiData.steps.map(step => ({
+          description: step.description,
+          images: [] 
+        }));
+        setSteps(newSteps);
+      }
+
+      setAiModalVisible(false);
+      Alert.alert('Thành công', 'AI đã điền thông tin giúp bạn! Hãy kiểm tra lại nhé.');
+
+    } catch (error) {
+      console.error(error);
+      const msg = error.response?.data?.message || 'AI không hiểu nội dung này. Vui lòng thử lại chi tiết hơn.';
+      Alert.alert('Lỗi', msg);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   // --- UPLOAD ---
   const handleImageUpload = async (imageObj, endpoint) => {
-    if (imageObj.id) return imageObj.id; // Ảnh cũ đã có ID
+    if (imageObj.id) return imageObj.id; 
 
     const formData = new FormData();
     const uri = Platform.OS === "android" ? imageObj.uri : imageObj.uri.replace("file://", "");
@@ -212,7 +301,6 @@ export default function AddRecipeScreen() {
     if (!title.trim()) return Alert.alert('Lỗi', 'Vui lòng nhập tên món');
     if (!selectedCategory) return Alert.alert('Lỗi', 'Vui lòng chọn danh mục');
     
-    // Validate Time & Servings
     const timeVal = parseInt(cookTime);
     const servVal = parseInt(servings);
     if (isNaN(timeVal) || timeVal <= 0) return Alert.alert('Lỗi', 'Thời gian nấu không hợp lệ');
@@ -254,13 +342,12 @@ export default function AddRecipeScreen() {
 
       const mediasPayload = mainMediaId ? [{ media: { id: mainMediaId }, type: 'AVATAR' }] : [];
 
-      // PAYLOAD ĐÃ BAO GỒM CÁC TRƯỜNG MỚI
       const finalPayload = {
         title,
         description,
-        cookTimeMinutes: timeVal, // Gửi số int
-        servings: servVal,        // Gửi số int
-        difficulty,               // Gửi enum string (EASY/MEDIUM/HARD)
+        cookTimeMinutes: timeVal,
+        servings: servVal,
+        difficulty,
         category: { id: selectedCategory.id },
         ingredients: ingredientsPayload,
         steps: stepsWithMedia,
@@ -323,6 +410,15 @@ export default function AddRecipeScreen() {
 
         <ScrollView contentContainerStyle={styles.scrollContent}>
           
+          {/* 🔹 NÚT TẠO BẰNG AI */}
+          <TouchableOpacity 
+            style={styles.aiMagicBtn} 
+            onPress={() => setAiModalVisible(true)}
+          >
+            <Feather name="zap" size={18} color="#fff" />
+            <Text style={styles.aiMagicText}>Tạo nhanh bằng AI</Text>
+          </TouchableOpacity>
+
           {/* ẢNH BÌA */}
           <View style={styles.imageUploadSection}>
             <TouchableOpacity onPress={pickMainImage}>
@@ -357,7 +453,6 @@ export default function AddRecipeScreen() {
               style={[styles.input, styles.textArea]} 
             />
             
-            {/* --- KHU VỰC NHẬP LIỆU MỚI --- */}
             <View style={styles.row}>
                 <View style={styles.col}>
                     <Text style={styles.label}>Thời gian (phút)</Text>
@@ -395,7 +490,6 @@ export default function AddRecipeScreen() {
                     </TouchableOpacity>
                 ))}
              </View>
-             {/* ----------------------------- */}
 
           </View>
 
@@ -504,6 +598,48 @@ export default function AddRecipeScreen() {
           </TouchableOpacity>
         </Modal>
 
+        {/* 🔹 MODAL AI INPUT */}
+        <Modal visible={aiModalVisible} animationType="slide" transparent>
+            <View style={styles.modalOverlay}>
+              <View style={styles.aiModalContent}>
+                <View style={{flexDirection:'row', justifyContent:'space-between', alignItems:'center'}}>
+                    <Text style={styles.modalTitle}>✨ AI Trợ Lý Bếp</Text>
+                    <TouchableOpacity onPress={() => setAiModalVisible(false)}><Feather name="x" size={24} color="#333" /></TouchableOpacity>
+                </View>
+                <Text style={styles.modalSub}>Nhập tên món, nguyên liệu thô, hoặc tải file text (.txt) để AI tự điền công thức.</Text>
+                
+                <TextInput
+                  style={styles.aiInput}
+                  multiline
+                  placeholder="VD: Gà kho gừng, cần nửa con gà, gừng, nước mắm. Kho 20 phút..."
+                  value={aiInputText}
+                  onChangeText={setAiInputText}
+                />
+
+                <View style={styles.aiActionRow}>
+                    <TouchableOpacity onPress={pickDocument} style={styles.fileBtn}>
+                        <Feather name="file-text" size={20} color="#007bff" />
+                        <Text style={{color: '#007bff', fontWeight:'500'}}>Chọn file .txt</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity onPress={() => setAiModalVisible(false)} style={styles.cancelBtn}>
+                    <Text style={{color:'#666'}}>Hủy</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    onPress={handleGenerateByAI} 
+                    style={styles.generateBtn}
+                    disabled={aiLoading}
+                  >
+                    {aiLoading ? <ActivityIndicator color="#fff" size="small"/> : <Text style={{color:'#fff', fontWeight:'bold'}}>Tạo ngay</Text>}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -533,11 +669,9 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#fff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e0e0e0', marginBottom: 12 },
   textArea: { minHeight: 80, textAlignVertical: 'top' },
   
-  // Style mới cho hàng ngang
   row: { flexDirection: 'row', marginBottom: 12 },
   col: { flex: 1 },
 
-  // Style cho nút Độ khó
   difficultyRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
   diffBtn: { flex: 1, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0', alignItems: 'center', backgroundColor: '#fff' },
   diffBtnActive: { backgroundColor: '#e6f7ff', borderColor: '#007bff' },
@@ -564,11 +698,34 @@ const styles = StyleSheet.create({
   removeThumbBtn: { position: 'absolute', top: -6, right: -6, backgroundColor: '#ff4d4f', borderRadius: 10, padding: 4 },
   addStepImageBtn: { width: 70, height: 70, borderRadius: 8, borderWidth: 1, borderColor: '#ccc', borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center' },
   
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#fff', maxHeight: '60%', borderTopLeftRadius: 16, borderTopRightRadius: 16 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
   modalTitle: { fontSize: 16, fontWeight: 'bold' },
   modalItem: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   modalItemText: { fontSize: 16, color: '#333' },
   modalItemTextSelected: { fontWeight: '600', color: '#007bff' },
+
+  // 🔹 STYLES CHO AI
+  aiMagicBtn: {
+    backgroundColor: '#8e44ad',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginBottom: 20,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: '#8e44ad', shadowOffset: {width:0,height:2}, shadowOpacity:0.3, shadowRadius:4
+  },
+  aiMagicText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  
+  aiModalContent: { backgroundColor: '#fff', padding: 20, margin: 16, borderRadius: 16, marginTop: '30%', shadowColor: '#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.25, shadowRadius:4, elevation:5 },
+  modalSub: { color: '#666', marginTop: 8, marginBottom: 12 },
+  aiInput: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, height: 140, textAlignVertical: 'top', fontSize: 15, backgroundColor: '#f9f9f9' },
+  aiActionRow: { flexDirection: 'row', marginTop: 12, alignItems: 'center' },
+  fileBtn: { flexDirection: 'row', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#007bff', borderRadius: 8, backgroundColor: '#e6f7ff' },
+  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 24, gap: 16, alignItems: 'center' },
+  cancelBtn: { padding: 10 },
+  generateBtn: { backgroundColor: '#8e44ad', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 8 },
 });
