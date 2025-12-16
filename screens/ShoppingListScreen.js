@@ -18,6 +18,7 @@ export default function ShoppingListScreen() {
   const [lists, setLists] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // 1. Lấy dữ liệu từ API
   const fetchLists = async () => {
     try {
       const res = await apiClient.get('/shopping-list/me');
@@ -34,24 +35,23 @@ export default function ShoppingListScreen() {
     fetchLists();
   }, []);
 
-  // --- XỬ LÝ DỮ LIỆU ---
+  // 2. XỬ LÝ DỮ LIỆU: Gom nhóm theo Ngày & Gộp nguyên liệu trùng
   const groupedData = useMemo(() => {
     if (!lists.length) return [];
 
     const groups = {};
 
     lists.forEach(list => {
-      // 👇 SỬA Ở ĐÂY: Dùng createdAt để hiển thị "Ngày thêm vào danh sách"
-      const rawDate = list.createdAt ? new Date(list.createdAt) : new Date();
-      
-      const dateKey = rawDate.toISOString().split('T')[0];
+      // Ưu tiên lấy ngày tạo (createdAt), nếu không có mới lấy ngày dự kiến
+      const rawDate = list.createdAt ? new Date(list.createdAt) : (list.plannedDate ? new Date(list.plannedDate) : new Date());
+      const dateKey = rawDate.toISOString().split('T')[0]; // Format: "YYYY-MM-DD"
 
       if (!groups[dateKey]) {
         groups[dateKey] = {
           title: `Ngày ${rawDate.getDate()}/${rawDate.getMonth() + 1}/${rawDate.getFullYear()}`,
           dateKey: dateKey,
           items: {},
-          listIds: new Set()
+          listIds: new Set() // Dùng Set để lưu ID các danh sách cần xóa
         };
       }
 
@@ -59,91 +59,126 @@ export default function ShoppingListScreen() {
 
       list.items.forEach(item => {
         const itemId = item.ingredient.id;
+        // Key gộp: ID nguyên liệu + Đơn vị (để tránh cộng nhầm đơn vị khác nhau)
         const mergeKey = `${itemId}_${item.unit}`;
 
         if (groups[dateKey].items[mergeKey]) {
+          // A. NẾU ĐÃ CÓ: Cộng dồn số lượng
           groups[dateKey].items[mergeKey].quantity += item.quantity;
-          if (!item.purchased) groups[dateKey].items[mergeKey].purchased = false; 
+          
+          // Logic: Nếu có 1 cái chưa mua -> Cả nhóm coi như chưa mua xong
+          if (!item.purchased) {
+            groups[dateKey].items[mergeKey].purchased = false; 
+          }
+          
+          // Lưu vết item gốc (QUAN TRỌNG: Phải lưu cả quantity và unit để tránh lỗi 500)
           groups[dateKey].items[mergeKey].originalItems.push({ 
             listId: list.id, 
             ingredientId: itemId,
-            purchased: item.purchased 
+            purchased: item.purchased,
+            quantity: item.quantity, // <--- Fix lỗi 500
+            unit: item.unit          // <--- Fix lỗi 500
           });
+
         } else {
+          // B. NẾU MỚI: Tạo mới
           groups[dateKey].items[mergeKey] = {
             ...item,
             originalItems: [{ 
               listId: list.id, 
               ingredientId: itemId,
-              purchased: item.purchased 
+              purchased: item.purchased,
+              quantity: item.quantity, // <--- Fix lỗi 500
+              unit: item.unit          // <--- Fix lỗi 500
             }]
           };
         }
       });
     });
 
-    return Object.keys(groups).sort().reverse() // reverse để ngày mới nhất lên đầu
-      .map(dateKey => ({
-        title: groups[dateKey].title,
-        dateKey: groups[dateKey].dateKey,
-        listIds: Array.from(groups[dateKey].listIds),
-        data: Object.values(groups[dateKey].items).map(item => ({
-          ...item,
-          uniqueRowKey: `${dateKey}_${item.ingredient.id}_${item.unit}`
-        }))
-      }));
+    // Sắp xếp ngày mới nhất lên đầu
+    const sortedDates = Object.keys(groups).sort().reverse();
+    
+    // Chuyển đổi sang mảng cho SectionList
+    return sortedDates.map(dateKey => ({
+      title: groups[dateKey].title,
+      listIds: Array.from(groups[dateKey].listIds),
+      data: Object.values(groups[dateKey].items).map(item => ({
+        ...item,
+        // Tạo Key duy nhất để tránh lỗi trùng key của React
+        uniqueRowKey: `${dateKey}_${item.ingredient.id}_${item.unit}`
+      }))
+    }));
 
   }, [lists]);
 
+  // 3. XỬ LÝ CHECK / UNCHECK MÓN ĂN
   const handleToggleMergedItem = async (mergedItem) => {
     const newCheckedState = !mergedItem.purchased;
 
+    // A. Optimistic Update (Cập nhật giao diện ngay lập tức)
     const updatedLists = lists.map(list => {
       const listItems = list.items.map(item => {
+        // So sánh ID (ép về String để an toàn)
         const isMatch = mergedItem.originalItems.some(
-          oi => oi.listId === list.id && oi.ingredientId === item.ingredient.id
+          oi => String(oi.listId) === String(list.id) && 
+                String(oi.ingredientId) === String(item.ingredient.id)
         );
-        return isMatch ? { ...item, purchased: newCheckedState } : item;
+        
+        if (isMatch) {
+          return { ...item, purchased: newCheckedState };
+        }
+        return item;
       });
       return { ...list, items: listItems };
     });
 
     setLists(updatedLists);
 
+    // B. Gọi API cập nhật từng item gốc
     try {
       const updatePromises = mergedItem.originalItems.map(oi => {
-        return apiClient.patch('/shopping-items', {
+        // Payload đầy đủ để tránh lỗi 500 từ Backend
+        const payload = {
             shoppingList: { id: oi.listId },
             ingredient: { id: oi.ingredientId },
-            purchased: newCheckedState
-        });
+            purchased: newCheckedState,
+            quantity: oi.quantity,
+            unit: oi.unit
+        };
+        return apiClient.patch('/shopping-items', payload);
       });
+
       await Promise.all(updatePromises);
     } catch (err) {
-      console.error(err);
-      fetchLists();
+      console.error("Lỗi cập nhật trạng thái:", err);
+      Alert.alert('Lỗi', 'Không thể cập nhật trạng thái món ăn.');
+      fetchLists(); // Rollback về dữ liệu cũ nếu lỗi
     }
   };
 
+  // 4. XỬ LÝ XÓA NHÓM (Xóa toàn bộ danh sách trong ngày)
   const handleDeleteGroup = (dateTitle, listIds) => {
     Alert.alert(
       'Xóa danh sách',
-      `Bạn có muốn xóa toàn bộ danh sách của ${dateTitle}?`,
+      `Bạn có muốn xóa toàn bộ danh sách đi chợ của ${dateTitle}?`,
       [
         { text: 'Hủy', style: 'cancel' },
         {
           text: 'Xóa',
           style: 'destructive',
           onPress: async () => {
+            // Optimistic Update: Xóa khỏi state trước
             const newLists = lists.filter(l => !listIds.includes(l.id));
             setLists(newLists);
 
             try {
+              // Gọi API xóa từng List ID
               await Promise.all(listIds.map(id => apiClient.delete(`/shopping-list/${id}`)));
             } catch (error) {
               console.error(error);
               Alert.alert('Lỗi', 'Không thể xóa danh sách');
-              fetchLists();
+              fetchLists(); // Rollback
             }
           }
         }
@@ -151,35 +186,40 @@ export default function ShoppingListScreen() {
     );
   };
 
-  const renderItem = ({ item }) => (
-    <TouchableOpacity 
-      style={styles.itemRow} 
-      onPress={() => handleToggleMergedItem(item)}
-      activeOpacity={0.7}
-    >
-      <Feather 
-        name={item.purchased ? "check-square" : "square"} 
-        size={22} 
-        color={item.purchased ? "#4CAF50" : "#ccc"} 
-      />
-      <View style={styles.itemTextContainer}>
-        <Text style={[styles.itemName, item.purchased && styles.strikethrough]}>
-          {item.ingredient.name}
-        </Text>
-        <Text style={[styles.itemQty, item.purchased && styles.strikethrough]}>
-          {parseFloat(item.quantity.toFixed(2))} {item.unit}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
+  // --- RENDER COMPONENTS ---
+
+  const renderItem = ({ item }) => {
+    return (
+      <TouchableOpacity 
+        style={styles.itemRow} 
+        onPress={() => handleToggleMergedItem(item)}
+        activeOpacity={0.7}
+      >
+        <Feather 
+          name={item.purchased ? "check-square" : "square"} 
+          size={22} 
+          color={item.purchased ? "#4CAF50" : "#ccc"} 
+        />
+        <View style={styles.itemTextContainer}>
+          <Text style={[styles.itemName, item.purchased && styles.strikethrough]}>
+            {item.ingredient.name}
+          </Text>
+          <Text style={[styles.itemQty, item.purchased && styles.strikethrough]}>
+            {parseFloat(item.quantity.toFixed(2))} {item.unit}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const renderSectionHeader = ({ section }) => (
     <View style={styles.sectionHeader}>
       <View style={{flexDirection: 'row', alignItems: 'center', gap: 8}}>
-        <Feather name="clock" size={16} color="#007bff" />
+        <Feather name="calendar" size={16} color="#007bff" />
         <Text style={styles.sectionTitle}>{section.title}</Text>
       </View>
       
+      {/* Nút Xóa (Thùng rác) */}
       <TouchableOpacity 
         onPress={() => handleDeleteGroup(section.title, section.listIds)}
         style={{ padding: 4 }}
@@ -191,6 +231,7 @@ export default function ShoppingListScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Feather name="arrow-left" size={26} color="#333" />
@@ -200,7 +241,9 @@ export default function ShoppingListScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.center}><ActivityIndicator size="large" color="#007bff" /></View>
+        <View style={styles.center}>
+            <ActivityIndicator size="large" color="#007bff" />
+        </View>
       ) : (
         <SectionList
           sections={groupedData}
@@ -222,6 +265,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7f8fa' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
+  // Header Styles
   header: { 
     flexDirection: 'row', 
     alignItems: 'center', 
@@ -236,6 +280,7 @@ const styles = StyleSheet.create({
 
   listContent: { paddingBottom: 30 },
 
+  // Section Header Styles
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -247,6 +292,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 8,
     borderRadius: 8,
+    // Shadow
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
@@ -255,6 +301,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#007bff' },
 
+  // Item Row Styles
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -262,7 +309,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     backgroundColor: '#fff',
     marginHorizontal: 16,
-    marginBottom: 1,
+    marginBottom: 1, 
     borderRadius: 4
   },
   itemTextContainer: { flex: 1, marginLeft: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
